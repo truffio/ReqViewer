@@ -1,181 +1,150 @@
-"""Generate an interactive requirements viewer (one self-contained HTML file).
-
-Usage: python tools/viewer.py [--root DIR] [--out FILE]
-Default output: build/requirements_viewer.html (not tracked by git).
-
-The page shows the level files as a navigable graph: an outline, the selected
-record, and its neighbourhood (parents, children, references, parameters,
-ConOps needs and scenarios), plus a coverage matrix between levels. The
-Markdown level files stay the source of truth; re-run this script after edits.
-"""
-import argparse
-import json
+"""Build the viewer data (nodes, edges, findings, sections) from the project files."""
 import re
-import sys
+from dataclasses import asdict
 from pathlib import Path
 
-import lint
-import param_check
-import reqlib
-import trace_check
+from reqviewer import checks
+from reqviewer.config import LOADERS, id_regex
+from reqviewer.model import natural_key
+from reqviewer.parser import rel
+from reqviewer.sources import load_sources
 
-DEFAULT_OUT = Path("build") / "requirements_viewer.html"
-ID_RE = re.compile(r"(?<![\w-])(?:L0-(?:OBJ|CON|SUC|ASM)-\d+|L\d+-AER(?:-[A-Z0-9]+)*-\d+|N-\d{3}|SC-\d{3}"
-                   r"|SH-\d{2}|P-[A-Z]+-\d+|DD-\d+)\b")
-TEXT_FIELDS = ["Statement", "Rationale", "Verification", "TBD/TBR", "Source"]
-
-
-def table_rows(text, first_cell_re):
-    """Markdown table rows whose first cell matches `first_cell_re`, as cell lists."""
-    rows = []
-    for line in text.splitlines():
-        if line.startswith("|"):
-            cells = [c.strip() for c in line.strip().strip("|").split("|")]
-            if cells and re.fullmatch(first_cell_re, cells[0]):
-                rows.append(cells)
-    return rows
+EDGES = {
+    "parent": ("decomposes", "decomposed by"),
+    "derived": ("derives", "derived from"),
+    "uses": ("uses", "used by"),
+    "source": ("source", "cited as source by"),
+    "refers": ("refers to", "referred to by"),
+    "affects": ("affects", "affected by"),
+}
 
 
-def load_conops(root):
-    """Stakeholders, needs and scenarios from specs/CONOPS.md, if present."""
-    path = Path(root) / "specs" / "CONOPS.md"
-    if not path.exists():
-        return []
-    text = path.read_text(encoding="utf-8")
-    nodes = []
-    for c in table_rows(text, r"SH-\d+"):
-        nodes.append({"id": c[0], "kind": "stakeholder", "title": c[1],
-                      "fields": {"Description": c[2] if len(c) > 2 else ""}, "links": []})
-    for c in table_rows(text, r"N-\d+"):
-        if len(c) < 4 or not re.fullmatch(r"SH-\d+", c[1]):
-            continue  # traceability tables also start with need IDs
-        nodes.append({"id": c[0], "kind": "need", "title": c[2].strip('"“”')[:90],
-                      "fields": {"Stakeholder": c[1], "Need": c[2],
-                                 "Meaning for the Aeronef": c[3] if len(c) > 3 else ""},
-                      "links": [("stakeholder", c[1])]})
-    scenarios = {}
-    for m in re.finditer(r"^#### (SC-\d+) — (.+)$", text, re.M):
-        scenarios[m.group(1)] = {"id": m.group(1), "kind": "scenario", "title": m.group(2).strip(),
-                                 "fields": {}, "links": []}
-    for c in table_rows(text, r"SC-\d+"):
-        if c[0] in scenarios and len(c) >= 3 and "N-" in c[1]:
-            scenarios[c[0]]["fields"] = {"Needs exercised": c[1], "D3 modes": c[2]}
-            scenarios[c[0]]["links"] = [("exercises", n) for n in re.findall(r"N-\d+", c[1])]
-    return nodes + list(scenarios.values())
+def slug(text):
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "viewer"
 
 
-def load_decisions(root):
-    path = Path(root) / "registers" / "DECISIONS.md"
-    if not path.exists():
-        return []
-    return [{"id": c[0], "kind": "decision", "title": c[1][:90],
-             "fields": {"Decision": c[1], "Rationale": c[3] if len(c) > 3 else ""}, "links": []}
-            for c in table_rows(path.read_text(encoding="utf-8"), r"DD-\d+")]
+def build(root, config):
+    """Return the viewer data: see docs/DESIGN.md section 6."""
+    root = Path(root)
+    roles, lk = config.fields, config.links
+    id_re = re.compile(id_regex(config))
+    uses_re = re.compile(lk.uses_pattern) if lk.uses_pattern else None
+    derived_re = re.compile(lk.derived_pattern) if lk.derived_pattern else None
+    result = LOADERS[config.loader]().load(root, config)
+    items, source_problems = load_sources(root, config)
+    result.problems += source_problems
 
-
-def rel(root, path):
-    try:
-        return Path(path).resolve().relative_to(Path(root).resolve()).as_posix()
-    except ValueError:
-        return str(path)
-
-
-def build(root):
-    """Return the viewer data: nodes, edges and findings."""
-    repo = reqlib.load_repo(root)
-    params, _ = reqlib.load_parameters(root)
-    nodes, edges = {}, []
+    nodes, edges, seen_edges = {}, [], set()
 
     def add_edge(src, dst, kind):
-        if src != dst:
+        if src != dst and (src, dst, kind) not in seen_edges:
+            seen_edges.add((src, dst, kind))
             edges.append({"from": src, "to": dst, "kind": kind})
 
-    for r in repo.records:
-        nodes[r.id] = {"id": r.id, "kind": "req", "level": r.get("Level") or r.file_level,
-                       "section": r.section, "type": r.get("Type"), "status": r.get("Status"),
-                       "title": r.get("Statement"), "fields": dict(r.fields),
-                       "file": rel(root, r.file), "line": r.line}
-    for a in repo.assumptions:
-        nodes[a.id] = {"id": a.id, "kind": "asm", "level": "L0", "section": a.section,
-                       "status": a.get("Status"), "title": a.get("Assumption"),
-                       "fields": dict(a.fields), "file": rel(root, a.file), "line": a.line}
-    for p in params:
-        pid = str(p.get("id", ""))
-        nodes[pid] = {"id": pid, "kind": "param", "title": str(p.get("name", "")),
-                      "status": str(p.get("status", "")),
-                      "fields": {k.capitalize(): "" if v is None else str(v) for k, v in p.items()}}
-    for extra in load_conops(root) + load_decisions(root):
-        nodes[extra["id"]] = {k: v for k, v in extra.items() if k != "links"}
-        for kind, dst in extra["links"]:
-            add_edge(extra["id"], dst, kind)
+    def ids(text):
+        return [m.group(0) for m in id_re.finditer(text)]
 
-    for r in repo.records:
-        parents = reqlib.parent_ids(r.get("Parent(s)"))
-        for pid in parents:
-            add_edge(pid, r.id, "parent")
-        dd = reqlib.derived_dd(r.get("Parent(s)"))
-        if dd:
-            add_edge(dd, r.id, "derived")
-        for pid in set(reqlib.param_refs(r.get("Statement")) + reqlib.param_refs(r.get("Parameters"))):
-            add_edge(r.id, pid, "uses")
-        for sid in set(ID_RE.findall(r.get("Source"))):
-            add_edge(r.id, sid, "source")
-        text = " ".join(r.get(f) for f in TEXT_FIELDS if f != "Source")
-        for ref in sorted(set(ID_RE.findall(text))):
-            if ref not in parents and not ref.startswith("P-") and ref != dd:
-                add_edge(r.id, ref, "refers")
-    for a in repo.assumptions:
-        for ref in sorted(set(ID_RE.findall(a.get("Affects") + " " + a.get("Rationale")))):
-            add_edge(a.id, ref, "affects")
+    kept = []
+    for r in result.records:
+        rid = r.get(config.format.id_field)
+        if rid in nodes:
+            continue
+        req = r.kind == "req"
+        node = {"id": rid, "kind": r.kind, "title": r.get(roles.statement if req else roles.assumption),
+                "fields": dict(r.fields), "status": r.get(roles.status),
+                "level": r.get(roles.level) or r.file_level, "section": r.section,
+                "file": rel(root, r.file), "line": r.line}
+        if req:
+            node["type"] = r.get(roles.type)
+        nodes[rid] = node
+        kept.append((r, node))
 
-    # placeholder nodes for anything referenced but not defined
+    for item in sorted(items, key=lambda i: i["merge"]):     # merge sources last
+        links, merge = item.pop("links"), item.pop("merge")
+        if merge and item["id"] in nodes:
+            nodes[item["id"]]["fields"].update(item["fields"])
+        elif merge or item["id"] in nodes:
+            continue
+        else:
+            nodes[item["id"]] = item
+        for ln, target in links:
+            add_edge(item["id"], target, ln.kind)
+
+    for r, node in kept:
+        rid = node["id"]
+        parents_text = r.get(roles.parents)
+        derived = None
+        if derived_re and (m := derived_re.search(parents_text)):
+            derived = m.group(1)
+            parents_text = parents_text.replace(m.group(0), " ")
+            add_edge(derived, rid, "derived")
+        parents = [] if parents_text.strip() == lk.none_value else ids(parents_text)
+        for p in parents:
+            add_edge(p, rid, "parent")
+        if node["kind"] == "asm":
+            for f in lk.affects_fields:
+                for ref in sorted(set(ids(r.get(f)))):
+                    add_edge(rid, ref, "affects")
+            continue
+        used = set()
+        for f in lk.uses_fields if uses_re else []:
+            used.update(m.group(1) if uses_re.groups else m.group(0) for m in uses_re.finditer(r.get(f)))
+        for u in sorted(used):
+            add_edge(rid, u, "uses")
+        for f in lk.source_fields:
+            for ref in sorted(set(ids(r.get(f)))):
+                add_edge(rid, ref, "source")
+        skip = {config.format.id_field, roles.parents, *lk.source_fields}
+        names = lk.refer_fields or [f for f in r.fields if f not in skip]
+        for ref in sorted(set(ids(" ".join(r.get(f) for f in names)))):
+            if ref not in parents and ref != derived and ref not in used \
+                    and not (uses_re and uses_re.fullmatch(ref)):
+                add_edge(rid, ref, "refers")
+
+    yaml_kind = next((s.kind for s in config.sources if s.type == "yaml"), "missing")
     for e in edges:
         for end in (e["from"], e["to"]):
             if end not in nodes:
-                kind = "param" if end.startswith("P-") else "missing"
-                nodes[end] = {"id": end, "kind": kind, "title": "", "missing": True,
-                              "status": "not in database" if kind == "param" else "not found",
+                uses = e["kind"] == "uses" and end == e["to"]
+                nodes[end] = {"id": end, "kind": yaml_kind if uses else "missing", "title": "",
+                              "missing": True, "status": "not in database" if uses else "not found",
                               "fields": {}}
 
-    findings = {}
-    for f in lint.run(root) + trace_check.run(root) + param_check.run(root):
-        findings.setdefault(f.item or "", []).append(
-            {"severity": f.severity, "code": f.code, "message": f.message})
-    return {"nodes": list(nodes.values()), "edges": edges, "findings": findings,
-            "sections": section_order(root), "problems": [str(p) for p in repo.problems]}
+    sections = [{"level": lv, "section": s} for lv, s in dict.fromkeys(result.sections)]
+    for n in nodes.values():
+        if n["kind"] in ("req", "asm"):
+            pair = {"level": n["level"], "section": n["section"]}
+            if pair not in sections:
+                sections.append(pair)
+    levels = sorted({*result.levels, *(s["level"] for s in sections)}, key=natural_key)
+
+    data = {"meta": meta(config, levels), "nodes": list(nodes.values()), "edges": edges,
+            "findings": {}, "sections": sections, "problems": [str(p) for p in result.problems]}
+    for f in checks.run(result, data):
+        data["findings"].setdefault(f["item"], []).append(
+            {"severity": f["severity"], "code": f["code"], "message": f["message"]})
+    return data
 
 
-def section_order(root):
-    out = []
-    for path in reqlib.level_files(root):
-        found, _ = reqlib.find_sections(path.read_text(encoding="utf-8"))
-        level = reqlib.file_level(path)
-        for name, (begin, _) in sorted(found.items(), key=lambda kv: kv[1][0]):
-            out.append({"level": level, "section": name})
-    return out
-
-
-def render(data):
-    payload = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
-    return TEMPLATE.replace("/*DATA*/null", payload)
-
-
-def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--root", type=Path, default=reqlib.REPO_ROOT)
-    ap.add_argument("--out", type=Path, help=f"output file (default: <root>/{DEFAULT_OUT.as_posix()})")
-    args = ap.parse_args(argv)
-    out = args.out or args.root / DEFAULT_OUT
-    data = build(args.root)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render(data), encoding="utf-8")
-    reqs = sum(1 for n in data["nodes"] if n["kind"] == "req")
-    print(f"wrote {out} ({reqs} requirement(s), {len(data['nodes'])} node(s), "
-          f"{len(data['edges'])} link(s))")
-    return 0
-
-
-TEMPLATE = (Path(__file__).with_name("viewer_template.html")).read_text(encoding="utf-8")
-
-if __name__ == "__main__":
-    sys.exit(main())
+def meta(config, levels):
+    kinds = {"req": {"label": "Requirement", "group": "Requirements"},
+             "asm": {"label": "Assumption", "group": "Assumptions"}}
+    edges = {k: {"label": a, "reverse": b} for k, (a, b) in EDGES.items()}
+    for s in config.sources:
+        label = s.label or s.kind
+        if not s.merge:
+            kinds[s.kind] = {"label": s.singular or label, "group": label, "color": s.color}
+        for ln in s.links:
+            edges[ln.kind] = {"label": ln.label or ln.kind,
+                              "reverse": ln.reverse_label or f"{ln.label or ln.kind} (reverse)"}
+    kinds["missing"] = {"label": "Not defined", "group": "Not defined"}
+    for k, v in kinds.items():
+        v.update(config.display.kinds.get(k, {}))
+        v.setdefault("color", "")
+    d = config.display
+    return {"title": config.title, "storage_key": "reqviewer." + slug(config.title),
+            "id_pattern": id_regex(config), "levels": levels, "roles": asdict(config.fields),
+            "none_value": config.links.none_value, "detail_rows": d.detail_rows,
+            "label_strip": d.label_strip, "rationale_split": d.rationale_split,
+            "criteria_marker": d.criteria_marker, "value_field": d.value_field,
+            "unit_field": d.unit_field, "kinds": kinds, "edges": edges}
