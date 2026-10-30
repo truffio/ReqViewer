@@ -1,21 +1,34 @@
 """Command-line interface for reqviewer."""
 
 import argparse
+import sys
 from pathlib import Path
+
+from reqviewer import checks, graph, render
+from reqviewer.config import ConfigError, load_config
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description="Generate a self-contained requirements viewer page."
-    )
-    parser.add_argument("--root", type=Path, help="project root directory")
-    parser.add_argument("--config", type=Path, help="configuration file")
-    parser.add_argument("--out", type=Path, help="output HTML file")
-    parser.add_argument("--findings", type=Path, help="findings file")
-    parser.parse_args(argv)
-    print("not implemented yet")
-    return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    ap = argparse.ArgumentParser(prog="reqviewer",
+                                 description="Write a self-contained requirements viewer page.")
+    ap.add_argument("--root", type=Path, default=Path("."), help="project root (default: current directory)")
+    ap.add_argument("--config", type=Path, help="configuration file (default: <root>/reqviewer.toml)")
+    ap.add_argument("--out", type=Path, help="output HTML file (default: the config 'out', under the root)")
+    ap.add_argument("--findings", type=Path, help="JSON file of extra findings")
+    args = ap.parse_args(argv)
+    try:
+        if not args.root.is_dir():
+            raise ConfigError(f"root is not a directory: {args.root}")
+        config = load_config(args.root, args.config)
+        if args.findings:
+            checks.load_external(args.findings)
+        data = graph.build(args.root, config)
+        out = args.out or args.root / config.out
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(render.render(data), encoding="utf-8")
+    except (ConfigError, OSError) as exc:
+        print(f"reqviewer: error: {exc}", file=sys.stderr)
+        return 2
+    records = sum(1 for n in data["nodes"] if n["kind"] in ("req", "asm"))
+    print(f"wrote {out} ({records} record(s), {len(data['nodes'])} node(s), {len(data['edges'])} link(s))")
+    return 0
