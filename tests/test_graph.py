@@ -35,7 +35,7 @@ class SampleContractTest(unittest.TestCase):
         self.assertEqual(meta["kinds"]["req"], {"label": "Requirement", "group": "Requirements", "color": ""})
         self.assertEqual(meta["kinds"]["param"], {"label": "Parameter", "group": "Parameters", "color": "#8c8c84"})
         self.assertEqual(meta["kinds"]["scenario"]["group"], "Scenarios")
-        self.assertEqual(meta["kinds"]["missing"]["color"], "")
+        self.assertEqual(meta["kinds"]["missing"]["color"], "#e15759")
         self.assertEqual(meta["edges"]["uses"], {"label": "uses", "reverse": "used by"})
         self.assertEqual(meta["edges"]["exercises"], {"label": "exercises", "reverse": "exercised by"})
         self.assertTrue(re.compile(meta["id_pattern"]).search("see L1-BRW-001."))
