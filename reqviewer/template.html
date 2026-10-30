@@ -167,7 +167,8 @@ const DATA = /*DATA*/null;
 const META = DATA.meta, R = META.roles, NONE = META.none_value;
 document.title = META.title;
 document.getElementById("title").textContent = META.title;
-const ID_RE = new RegExp(META.id_pattern, "g");
+// a pattern this engine cannot compile finds no IDs, and the page still works
+const ID_RE = (() => { try { return new RegExp(META.id_pattern, "g"); } catch (e) { return /(?!)/g; } })();
 const STRIP_RE = (() => { try { return META.label_strip ? new RegExp(META.label_strip) : null; } catch (e) { return null; } })();
 const escRe = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const SPLIT_RE = META.rationale_split ? new RegExp("\\s(?=" + escRe(META.rationale_split) + ")") : null;
@@ -176,13 +177,16 @@ const CRIT_RE = META.criteria_marker ? new RegExp("(?:;\\s*)?" + escRe(META.crit
 const PALETTE = ["#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2", "#edc948", "#b07aa1", "#ff9da7",
   "#9c755f", "#86bcb6", "#d37295", "#8cd17d", "#a0cbe8", "#bab0ac"];
 const KIND_KEYS = Object.keys(META.kinds);
-const kindLabel = k => (META.kinds[k] && META.kinds[k].label) || k;
+// data keys can be any text ("constructor", "__proto__"): look them up as own properties only
+const own = (o, k) => (o && Object.hasOwn(o, k) ? o[k] : undefined);
+const kindSpec = k => own(META.kinds, k) || {};
+const kindLabel = k => kindSpec(k).label || k;
 // a kind without a configured colour takes a palette entry, counting from the end so that it
 // differs from the first colours given to requirements
-const kindColor = k => (META.kinds[k] && META.kinds[k].color) ||
+const kindColor = k => kindSpec(k).color ||
   (KIND_KEYS.includes(k) ? PALETTE[(PALETTE.length - 1 - KIND_KEYS.indexOf(k) % PALETTE.length)] : "#8c8c84");
-const edgeLabel = k => (META.edges[k] && META.edges[k].label) || k;
-const reverseLabel = k => (META.edges[k] && META.edges[k].reverse) || k;
+const edgeLabel = k => (own(META.edges, k) || {}).label || k;
+const reverseLabel = k => (own(META.edges, k) || {}).reverse || k;
 const lvIdx = l => META.levels.indexOf(l);
 const skey = key => META.storage_key + "." + key;
 const hashId = () => { try { return decodeURIComponent(location.hash.slice(1)); } catch (e) { return ""; } };
@@ -200,9 +204,9 @@ const parents = id => ins(id, ["parent", "derived"]).map(e => e.from);
 const uniq = a => [...new Set(a)];
 const reqs = DATA.nodes.filter(n => n.kind === "req");
 const levels = META.levels;
-const findingsOf = id => DATA.findings[id] || [];
+const findingsOf = id => own(DATA.findings, id) || [];
 const isNone = v => { const s = String(v ?? "").trim(); return !s || s === NONE; };
-const fieldOf = (n, role) => (role && n && n.fields && n.fields[role]) || "";
+const fieldOf = (n, role) => (role && n && own(n.fields, role)) || "";
 const isTbd = n => !!R.open_items && !isNone(fieldOf(n, R.open_items));
 
 // ------------------------------------------------------------------ colour
@@ -221,11 +225,17 @@ function colourOf(n) {
 
 // ------------------------------------------------------------------ text
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const unesc = s => s.replace(/&(amp|lt|gt|quot|#39);/g, (_, e) => ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" }[e]));
 const tidy = s => String(s ?? "").replace(/\s*\n\s*/g, " ").trim();
 function linkify(s) {
-  // IDs are found in the escaped text and stay escaped; the lookup uses the decoded form
-  return esc(tidy(s)).replace(ID_RE, id => byId.has(unesc(id)) ? `<a data-id="${id}" class="id">${id}</a>` : `<span class="id">${id}</span>`);
+  // IDs are found in the raw text; the text around them and each ID are escaped separately
+  const t = tidy(s);
+  let h = "", last = 0;
+  for (const m of t.matchAll(ID_RE)) {
+    const id = m[0];
+    h += esc(t.slice(last, m.index)) + (byId.has(id) ? `<a data-id="${esc(id)}" class="id">${esc(id)}</a>` : `<span class="id">${esc(id)}</span>`);
+    last = m.index + id.length;
+  }
+  return h + esc(t.slice(last));
 }
 function paragraphs(s) {
   const t = tidy(s);
@@ -253,7 +263,7 @@ function matches(n) {
 }
 function fillSelect(id, values) {
   const el = document.getElementById(id);
-  for (const v of uniq(values).filter(Boolean).sort()) el.insertAdjacentHTML("beforeend", `<option>${esc(v)}</option>`);
+  for (const v of uniq(values).filter(Boolean).sort()) el.insertAdjacentHTML("beforeend", `<option value="${esc(v)}">${esc(v)}</option>`);
 }
 (function applyRoles() {
   document.getElementById("ftype").hidden = !R.type;
@@ -346,7 +356,7 @@ function detail() {
     h += kids.length ? kids.map(cardHtml).join("") :
       `<p class="empty">${!isNone(alloc) ? "No child requirement yet: allocated to " + esc(alloc) + "." : "Leaf requirement."}</p>`;
   }
-  h += linkSection("Links from here", outs(n.id).filter(e => !["parent", "derived"].includes(e.kind)), "to");
+  h += linkSection("Links from here", outs(n.id).filter(e => n.kind !== "req" || !["parent", "derived"].includes(e.kind)), "to");
   h += linkSection("Links to here", ins(n.id).filter(e => n.kind !== "req" || !["parent", "derived"].includes(e.kind)), "from");
   if (f.length) h += `<h3>Findings</h3><ul class="findings">` +
     f.map(x => `<li class="${esc(x.severity)}"><b>${esc(x.code)}</b> ${esc(x.message)}</li>`).join("") + `</ul>`;
@@ -361,7 +371,7 @@ function detailRows(n) {
   const usesFields = META.uses_fields || [];
   let usesShown = false;
   const rows = names.map(k => {
-    const v = n.fields[k];
+    const v = own(n.fields, k);
     if (usesFields.includes(k) && k !== titleRole) { usesShown = true; return [k, paramList(n)]; }
     if (v === undefined) return [k, ""];
     if (k === R.rationale) return [k, paragraphs(v)];
@@ -383,8 +393,8 @@ function paramList(n) {
   if (!ps.length) return "";
   return ps.map(p => {
     const others = ins(p.id, ["uses"]).length - 1;
-    const val = META.value_field && p.fields[META.value_field];
-    const v = val ? ` = ${esc(val)} ${esc((META.unit_field && p.fields[META.unit_field]) || "")}` : "";
+    const val = META.value_field && own(p.fields, META.value_field);
+    const v = val ? ` = ${esc(val)} ${esc((META.unit_field && own(p.fields, META.unit_field)) || "")}` : "";
     return `<a data-id="${esc(p.id)}" class="id">${esc(p.id)}</a> <span class="chip${p.missing ? " warn" : ""}">${esc(p.status || "")}${v}</span>` +
       (others > 0 ? ` <span class="t">shared with ${others} other</span>` : "");
   }).join("<br>");
@@ -398,13 +408,14 @@ function cardHtml(id) {
 }
 function linkSection(title, es, end) {
   if (!es.length) return "";
-  const byKind = {};
+  const byKind = Object.create(null);
   for (const e of es) (byKind[e.kind] = byKind[e.kind] || []).push(e[end]);
   return `<h3>${title}</h3><dl class="fields">` + Object.entries(byKind).map(([k, ids]) =>
     `<dt>${esc(end === "to" ? edgeLabel(k) : reverseLabel(k))}</dt><dd>${uniq(ids).map(id => `<a data-id="${esc(id)}" class="id" title="${esc(short(byId.get(id) || {}, 120))}">${esc(id)}</a>`).join(", ")}</dd>`).join("") + `</dl>`;
 }
 
 // ------------------------------------------------------------------ graph
+const MORE = Symbol("more");                      // cannot collide with an ID
 const NW = 156, NH = 44, GX = 14, GY = 46, PAD = 16;
 const expanded = new Set();
 function graph() {
@@ -425,14 +436,14 @@ function graph() {
   const inTree = new Set(lanes.flatMap(l => l[1]));
   // cross-links are grouped into lanes by link kind and direction, e.g. "refers to", "affected by"
   const xEdges = showX ? [...outs(n.id), ...ins(n.id)].filter(e => !["parent", "derived"].includes(e.kind)) : [];
-  const xGroups = {};
+  const xGroups = Object.create(null);
   for (const e of xEdges) {
     const out = e.from === n.id, other = out ? e.to : e.from;
     if (inTree.has(other)) continue;
     const label = out ? edgeLabel(e.kind) : reverseLabel(e.kind);
     (xGroups[label] = xGroups[label] || []).push(other);
   }
-  for (const [label, ids] of Object.entries(xGroups)) lanes.push([label[0].toUpperCase() + label.slice(1), uniq(ids), true]);
+  for (const [label, ids] of Object.entries(xGroups)) lanes.push([label.charAt(0).toUpperCase() + label.slice(1), uniq(ids), true]);
 
   const perRow = Math.max(1, Math.floor((W - 2 * PAD + GX) / (NW + GX)));
   const pos = new Map(); let y = PAD; let body = "";
@@ -443,7 +454,7 @@ function graph() {
     const more = all.length - ids.length;
     body += `<text class="lane" x="${PAD}" y="${y + 10}">${esc(label)} · ${all.length}</text>`;
     y += 16;
-    const cells = more ? [...ids, "__more"] : ids;
+    const cells = more ? [...ids, MORE] : ids;
     if (!cells.length) { body += `<text class="sub" x="${PAD}" y="${y + 14}">none</text>`; y += 24 + GY / 2; continue; }
     const rows = Math.ceil(cells.length / perRow);
     for (let r = 0; r < rows; r++) {
@@ -451,7 +462,7 @@ function graph() {
       const rowW = row.length * NW + (row.length - 1) * GX;
       let x = Math.max(PAD, (W - rowW) / 2);
       for (const id of row) {
-        if (id === "__more") {
+        if (id === MORE) {
           body += `<g class="node more" data-more="${esc(key)}"><rect x="${x}" y="${y}" width="${NW}" height="${NH}" rx="8" fill="var(--panel-2)" stroke="var(--line)"/>` +
             `<text x="${x + NW / 2}" y="${y + NH / 2 + 4}" text-anchor="middle">+${more} more</text></g>`;
         } else {
@@ -482,7 +493,7 @@ function nodeSvg(id, x, y, sel) {
   const c = colourOf(m);
   const sub = m.kind === "req" || m.kind === "asm" ? short(m, 26) : (kindLabel(m.kind) + (m.title ? " · " + short(m, 16) : ""));
   return `<g class="node${sel ? " sel" : ""}" data-id="${esc(id)}"><title>${esc(id + " — " + tidy(m.title || ""))}</title>` +
-    `<rect x="${x}" y="${y}" width="${NW}" height="${NH}" rx="8" fill="${c}22" stroke="${c}"${m.missing ? ' stroke-dasharray="3 3"' : ""}/>` +
+    `<rect x="${x}" y="${y}" width="${NW}" height="${NH}" rx="8" fill="${c}" fill-opacity=".13" stroke="${c}"${m.missing ? ' stroke-dasharray="3 3"' : ""}/>` +
     `<rect x="${x}" y="${y}" width="5" height="${NH}" rx="2" fill="${c}" stroke="none"/>` +
     `<text class="idt" x="${x + 12}" y="${y + 17}">${esc(id)}</text>` +
     `<text class="sub" x="${x + 12}" y="${y + 33}">${esc(sub)}</text></g>`;
@@ -499,7 +510,7 @@ function coverage() {
   const canAlloc = !!R.allocation && reqs.some(r => allocated(r).length);
   const colOpts = [...levels.filter(l => lvIdx(l) > lvIdx(rowLv)).map(l => [l, "Level " + l]),
     ...(canAlloc ? [["alloc", `Allocation (${R.allocation})`]] : [])];
-  const rowSelect = `Rows <select id="covrow">${levels.map(l => `<option ${l === rowLv ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
+  const rowSelect = `Rows <select id="covrow">${levels.map(l => `<option value="${esc(l)}" ${l === rowLv ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
   if (!colOpts.length) {
     el.innerHTML = `<div class="cov-controls">${rowSelect}</div><p class="empty">Nothing to compare ${esc(rowLv)} with: ` +
       `there is no later level and no allocation field.</p>`;
@@ -539,7 +550,7 @@ function findingsView() {
   const el = document.getElementById("findings");
   const all = Object.entries(DATA.findings).flatMap(([id, fs]) => fs.map(f => ({ id, ...f })))
     .filter(f => !f.id || !byId.has(f.id) || matches(byId.get(f.id)));
-  const counts = {};
+  const counts = Object.create(null);
   for (const f of all) counts[f.code] = (counts[f.code] || 0) + 1;
   let h = `<div class="cov-controls">${all.length} finding(s)${all.length ? ": " : ""}` +
     Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<span class="chip">${esc(k)} ${v}</span>`).join(" ") + `</div>`;
@@ -631,7 +642,8 @@ let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTime
 counts();
 const start = hashId();
 state.sel = byId.has(start) ? start : (reqs[0] || DATA.nodes[0] || {}).id;
-showView(new URLSearchParams(location.search).get("view") || "explorer");
+const wanted = new URLSearchParams(location.search).get("view");
+showView(["explorer", "coverage", "findings"].includes(wanted) ? wanted : "explorer");
 </script>
 </body>
 </html>

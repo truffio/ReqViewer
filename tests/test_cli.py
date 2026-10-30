@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 
 from reqviewer import cli
-from support import ROOT, SAMPLE, ProjectCase, req
+from support import ROOT, SAMPLE, ProjectCase, needs_yaml, payload, req
 
 
 def run(*argv):
@@ -87,7 +87,25 @@ class CliTest(ProjectCase):
         root = self.project({"f.json": good})
         code, _, err = run("--root", root, "--findings", root / "f.json", "--out", root / "p.html")
         self.assertEqual((code, err), (0, ""))
-        self.assertIn('"code": "X"', (root / "p.html").read_text(encoding="utf-8"))
+        page = (root / "p.html").read_text(encoding="utf-8")
+        self.assertEqual(payload(page)["findings"][""][-1]["code"], "X")
+
+    def test_lone_surrogate_in_the_input_still_writes_the_page(self):
+        text = '[{"item": "", "severity": "error", "code": "X", "message": "bad \\ud800 char"}]'
+        root = self.project({"f.json": text})
+        code, _, err = run("--root", root, "--findings", root / "f.json", "--out", root / "p.html")
+        self.assertEqual((code, err), (0, ""))
+        page = (root / "p.html").read_text(encoding="utf-8")
+        self.assertEqual(payload(page)["findings"][""][-1]["message"], "bad \ud800 char")
+
+    @needs_yaml
+    def test_lone_surrogate_in_a_yaml_source_still_writes_the_page(self):
+        toml = 'out = "p.html"\n[[sources]]\ntype = "yaml"\nkind = "thing"\nfile = "t.yaml"'
+        root = self.project({"reqviewer.toml": toml, "t.yaml": '- {id: T-1, name: "\\uD800"}\n'})
+        code, _, err = run("--root", root)
+        self.assertEqual((code, err), (0, ""))
+        nodes = payload((root / "p.html").read_text(encoding="utf-8"))["nodes"]
+        self.assertEqual(nodes[0]["title"], "\ud800")
 
     def test_findings_option_bad_file(self):
         item = '{"item": "", "severity": "%s", "code": "X", "message": "m"}'

@@ -1,3 +1,5 @@
+import json
+import re
 import tempfile
 import tomllib
 import unittest
@@ -14,6 +16,12 @@ needs_yaml = unittest.skipUnless(HAVE_YAML, "PyYAML is not installed")
 
 ROOT = Path(__file__).resolve().parent.parent
 SAMPLE = ROOT / "examples" / "sample"
+
+
+def payload(page):
+    """The data a rendered page carries: the JSON text inside the JSON.parse string literal."""
+    literal = re.search(r'^const DATA = JSON\.parse\((".*")\);$', page, re.M).group(1)
+    return json.loads(json.loads(literal))
 
 
 def block(fields, kind="req"):
