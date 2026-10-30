@@ -248,7 +248,7 @@ Edge kinds: `parent` (parent to child), `derived` (decision to record), `uses`, 
 Rules:
 
 - `refers` skips the record's own parents, the `derived` target, and anything matching `uses_pattern`.
-- A referenced ID with no node gets a placeholder: the kind of the source whose nodes match it is not knowable, so the kind is `param`-like only through `uses`: a `uses` target gets the kind of the first `yaml` source (or `missing` if there is none), status `not in database`; any other target gets kind `missing`, status `not found`.
+- A referenced ID with no node gets a placeholder. A `uses` target gets the kind of the first `yaml` source (`missing` if there is none) and status `not in database`. Any other target gets kind `missing` and status `not found`.
 - `levels` comes from the loader, sorted naturally, so `L2` comes before `L10`. Level comparison uses list position, never string order.
 - Every (level, section) that a node has must be in `sections`, including the default section and any level set by a `level` field that differs from the file. Otherwise a record is lost from the outline.
 - A duplicate ID keeps the first node, and `checks.py` reports it.
