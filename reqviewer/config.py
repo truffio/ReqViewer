@@ -2,14 +2,16 @@
 import re
 import tomllib
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from reqviewer.parser import MarkdownLoader
 
 LOADERS = {"markdown": MarkdownLoader}
 RESERVED_KINDS = ("req", "asm", "missing")
-COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
-JS_BAD_RE = re.compile(r"\(\?P[<=>]|\(\?>|\(\?[aiLmsux]+(?:-[imsx]+)?[:)]|\(\?-[imsx]+:")
+COLOR_RE = re.compile(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})")
+# Python syntax that JavaScript lacks: named groups, atomic groups, comments, conditionals, inline
+# flags, possessive quantifiers
+JS_BAD_RE = re.compile(r"\(\?P[<=>]|\(\?>|\(\?#|\(\?\(|\(\?[aiLmsux]+(?:-[imsx]+)?[:)]|\(\?-[imsx]+:|[*+?}]\+")
 DEFAULT_KINDS = {"req": {"label": "Requirement"}, "asm": {"label": "Assumption"}}
 
 
@@ -158,19 +160,34 @@ def _fill(obj, table, path, allowed=None):
 def _regex(pattern, name):
     try:
         return re.compile(pattern)
-    except re.error as exc:
+    except (re.error, OverflowError, RecursionError) as exc:
         raise ConfigError(f"{name}: bad regular expression: {exc}") from None
 
 
 def _js_regex(pattern, name):
     rx = _regex(pattern, name)
-    if JS_BAD_RE.search(pattern):
+    plain = re.sub(r"\[\^?\]?[^\]]*\]", "", re.sub(r"\\.", "", pattern, flags=re.S))   # no escapes, no classes
+    if JS_BAD_RE.search(plain):
         raise ConfigError(f"{name}: syntax not available in JavaScript")
     return rx
 
 
+def _not_empty(rx, name):
+    if rx.match(""):
+        raise ConfigError(f"{name}: must not match an empty string")
+
+
+def _glob(pattern, name):
+    if not pattern or PurePosixPath(pattern).is_absolute() or PureWindowsPath(pattern).anchor:
+        raise ConfigError(f"{name}: must be a relative glob")
+    try:
+        list(Path("no-such-dir").glob(pattern))      # raises on a pattern that cannot work
+    except (ValueError, NotImplementedError) as exc:
+        raise ConfigError(f"{name}: bad glob: {exc}") from None
+
+
 def _color(value, name):
-    if value and not COLOR_RE.match(value):
+    if value and not COLOR_RE.fullmatch(value):
         raise ConfigError(f"{name}: colour must be #rgb or #rrggbb")
 
 
@@ -185,7 +202,7 @@ def _source(table, path):
     if not isinstance(table, dict):
         raise ConfigError(f"{path}: expected a table")
     stype = table.get("type")
-    if stype not in SOURCE_KEYS:
+    if not isinstance(stype, str) or stype not in SOURCE_KEYS:
         raise ConfigError(f"{path}.type: must be one of {', '.join(SOURCE_KEYS)}")
     src = _fill(Source(), table, path, SOURCE_KEYS[stype])
     for key in ("kind", "file", {"table": "id", "heading": "pattern"}.get(stype)):
@@ -197,7 +214,10 @@ def _source(table, path):
     if stype == "heading" and _js_regex(src.pattern, f"{path}.pattern").groups < 1:
         raise ConfigError(f"{path}.pattern: needs a group for the ID")
     if stype == "table":
-        _js_regex(src.id, f"{path}.id")
+        if src.title_max < 0:
+            raise ConfigError(f"{path}.title_max: must not be negative")
+        if _js_regex(src.id, f"{path}.id").fullmatch(""):
+            raise ConfigError(f"{path}.id: must not match an empty cell")
         src.require = {_index(k, f"{path}.require"): v for k, v in src.require.items()}
         for k, v in src.require.items():
             _check_type(v, str, f"{path}.require.{k}")
@@ -209,7 +229,7 @@ def _source(table, path):
 
 
 def _link(item, path):
-    if isinstance(item, dict) and "kind" not in item:
+    if isinstance(item, dict) and not item.get("kind"):
         raise ConfigError(f"{path}.kind: required")
     link = _fill(Link(), item, path)
     _js_regex(link.pattern, f"{path}.pattern")
@@ -246,12 +266,15 @@ def _validate(cfg):
         raise ConfigError("files.level_pattern: needs exactly one group")
     if not cfg.ids.patterns:
         raise ConfigError("ids.patterns: at least one pattern is required")
+    for n, g in enumerate(cfg.files.levels):
+        _glob(g, f"files.levels[{n}]")
     for n, p in enumerate(cfg.ids.patterns):
-        _js_regex(p, f"ids.patterns[{n}]")
+        _not_empty(_js_regex(p, f"ids.patterns[{n}]"), f"ids.patterns[{n}]")
+    _regex(id_regex(cfg), "ids.patterns")                 # the joined pattern must compile too
     ln = cfg.links
     for key in ("derived_pattern", "uses_pattern"):
         if getattr(ln, key):
-            _js_regex(getattr(ln, key), f"links.{key}")
+            _not_empty(_js_regex(getattr(ln, key), f"links.{key}"), f"links.{key}")
     if ln.derived_pattern and re.compile(ln.derived_pattern).groups < 1:
         raise ConfigError("links.derived_pattern: needs a group for the node ID")
     _js_regex(cfg.display.label_strip, "display.label_strip")
@@ -280,5 +303,5 @@ def load_config(root, explicit=None):
         return Config()
     try:
         return parse(tomllib.loads(path.read_text(encoding="utf-8-sig")))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, ConfigError) as exc:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, RecursionError, ConfigError) as exc:
         raise ConfigError(f"{path}: {exc}") from None

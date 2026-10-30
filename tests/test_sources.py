@@ -120,6 +120,36 @@ class SourcesTest(ProjectCase):
                     self.assertEqual((p.file, p.code, p.severity), ("t.yaml", "FORMAT", "error"))
         self.assertEqual(self.load({"t.yaml": "things:\n"}, toml), ([], []))
 
+    @needs_yaml
+    def test_yaml_errors_that_are_not_yaml_errors_are_problems(self):
+        toml = '[[sources]]\ntype="yaml"\nkind="thing"\nfile="t.yaml"'
+        for text in ("- {id: A, when: 2001-13-45}\n", "[" * 5000 + "]" * 5000 + "\n"):
+            with self.subTest(text[:20]):
+                items, problems = self.load({"t.yaml": text}, toml)
+                self.assertEqual((items, len(problems)), ([], 1))
+                self.assertIn("cannot read", problems[0].message)
+
+    @needs_yaml
+    def test_yaml_list_key_missing_is_a_problem(self):
+        toml = '[[sources]]\ntype="yaml"\nkind="thing"\nfile="t.yaml"\nlist_key="things"'
+        items, problems = self.load({"t.yaml": "thing: [{id: A}]\n"}, toml)
+        self.assertEqual(items, [])
+        self.assertEqual([p.message for p in problems], ["no key 'things' at the top level"])
+
+    @needs_yaml
+    def test_yaml_empty_id_is_a_problem(self):
+        toml = '[[sources]]\ntype="yaml"\nkind="thing"\nfile="t.yaml"'
+        items, problems = self.load({"t.yaml": "- {id: ''}\n- {id: ' '}\n- {id: B}\n"}, toml)
+        self.assertEqual([i["id"] for i in items], ["B"])
+        self.assertEqual(len(problems), 2)
+
+    def test_heading_pattern_without_an_id_is_a_problem(self):
+        toml = '[[sources]]\ntype="heading"\nkind="sc"\nfile="s.md"\npattern=\'^#### (SC-\\d+)?x\''
+        items, problems = self.load({"s.md": "#### x\n#### SC-1x\n"}, toml)
+        self.assertEqual([i["id"] for i in items], ["SC-1"])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("line 1", problems[0].message)
+
     def test_yaml_without_pyyaml(self):
         toml = '[[sources]]\ntype="yaml"\nkind="thing"\nfile="t.yaml"'
         with mock.patch.dict(sys.modules, {"yaml": None}):

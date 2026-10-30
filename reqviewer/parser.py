@@ -17,8 +17,8 @@ def rel(root, path):
 
 
 def file_level(path, level_re):
-    m = level_re.match(Path(path).name)
-    return m.group(1) if m else Path(path).stem
+    m = level_re.search(Path(path).name)
+    return m.group(1) if m and m.group(1) else Path(path).stem
 
 
 class MarkdownLoader:

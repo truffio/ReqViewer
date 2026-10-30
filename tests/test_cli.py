@@ -1,8 +1,10 @@
 import contextlib
 import io
+import os
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 from reqviewer import cli
 from support import ROOT, SAMPLE, ProjectCase, req
@@ -108,6 +110,33 @@ class CliTest(ProjectCase):
             cli.main(["--nope"])
         self.assertEqual(cm.exception.code, 2)
         self.assertIn("usage: reqviewer", err.getvalue())
+
+    def test_malformed_values_give_one_line_and_exit_2(self):
+        for toml in ["[[sources]]\ntype = ['table']", "[ids]\npatterns = ['A{99999999999}']",
+                     "[files]\nlevels = ['/x/*.md']", "[files]\nlevels = ['']", "[files]\nlevels = ['a**b/*.md']",
+                     "[links]\nuses_pattern = 'Z*'", 'out = "a\\u0000b"', "a = " + "[" * 5000 + "]" * 5000]:
+            with self.subTest(toml[:40]):
+                code, out, err = run("--root", self.project({"reqviewer.toml": toml}))
+                self.assert_error(code, err)
+                self.assertEqual(out, "")
+
+    def test_deeply_nested_findings_file(self):
+        root = self.project({"f.json": "[" * 5000 + "]" * 5000})
+        code, _, err = run("--root", root, "--findings", root / "f.json")
+        self.assert_error(code, err, "f.json")
+
+    def test_a_defect_is_one_line_not_a_traceback(self):
+        with mock.patch.object(cli.graph, "build", side_effect=KeyError("boom")):
+            code, out, err = run("--root", self.project({}))
+        self.assert_error(code, err, "KeyError", "boom")
+
+    def test_output_path_the_console_cannot_encode(self):
+        root = self.project({})
+        done = subprocess.run([sys.executable, "-m", "reqviewer", "--root", str(root), "--out",
+                               str(root / "日本語.html")], cwd=ROOT, capture_output=True, text=True,
+                              env={**os.environ, "PYTHONIOENCODING": "ascii"})
+        self.assertEqual((done.returncode, done.stderr), (0, ""))
+        self.assertTrue((root / "日本語.html").is_file())
 
     def test_python_dash_m(self):
         root = self.project({})

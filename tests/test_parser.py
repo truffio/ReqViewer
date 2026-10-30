@@ -38,6 +38,16 @@ class ParserTest(ProjectCase):
         res = self.load({"docs/top.md": req("A-1")}, '[files]\nlevels = ["docs/*.md"]')
         self.assertEqual(res.levels, ["top"])
 
+    def test_level_pattern_is_searched_in_the_name(self):
+        files = {"requirements/draft_L3.md": req("A-1"), "requirements/Z.md": req("A-2")}
+        res = self.load(files, "[files]\nlevels = ['requirements/*.md']\nlevel_pattern = '_(L\\d+)'")
+        self.assertEqual(sorted(res.levels), ["L3", "Z"])
+
+    def test_level_pattern_group_that_is_unset_or_empty_gives_the_stem(self):
+        for pattern in ("^(X)?", "^(L*)"):
+            res = self.load({"requirements/Z.md": req("A-1")}, f"[files]\nlevels = ['requirements/*.md']\nlevel_pattern = '{pattern}'")
+            self.assertEqual((res.levels, res.problems), (["Z"], []))
+
     def test_sections_default_and_empty(self):
         text = ("<!-- BEGIN SECTION ONE -->\n" + req("A-1") + "<!-- END SECTION ONE -->\n"
                 "<!-- BEGIN SECTION EMPTY -->\n<!-- END SECTION EMPTY -->\n" + req("A-2"))

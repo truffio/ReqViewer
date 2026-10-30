@@ -158,6 +158,18 @@ class GraphRulesTest(ProjectCase):
         self.assertEqual(self.edges(data, "refers"), {("A-1", "DD-2")})
         self.assertEqual(self.node(data, "DD-1")["kind"], "missing")
 
+    def test_optional_groups_that_stay_unset_are_problems_not_nodes(self):
+        toml = r"""[links]
+derived_pattern = 'Derived \((D-\d)?\)'
+uses_pattern = '(PRM-\d)?x'
+uses_fields = ["Parameters"]
+"""
+        data = self.build({"requirements/L0.md": req("A-1", **{P: "Derived ()"}, Parameters="x")}, toml)
+        self.assertEqual(self.edges(data, "derived") | self.edges(data, "uses"), set())
+        self.assertEqual(len(data["problems"]), 2)
+        self.assertIn("links.derived_pattern", data["problems"][0])
+        self.assertEqual([n["id"] for n in data["nodes"]], ["A-1"])
+
     def test_without_derived_pattern_nothing_is_derived(self):
         data = self.build({"requirements/L0.md": req("A-1", **{P: "Derived (DD-1)"})})
         self.assertEqual(self.edges(data, "derived"), set())

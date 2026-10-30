@@ -5,7 +5,7 @@ from pathlib import Path
 
 from reqviewer import checks
 from reqviewer.config import LOADERS, id_regex
-from reqviewer.model import natural_key
+from reqviewer.model import Finding, natural_key
 from reqviewer.parser import rel
 from reqviewer.sources import load_sources
 
@@ -44,6 +44,10 @@ def build(root, config, extra_findings=()):
     def ids(text):
         return [m.group(0) for m in id_re.finditer(text)]
 
+    def unset(r, what):
+        result.problems.append(Finding(rel(root, r.file), r.line, "error", "FORMAT", r.get(config.format.id_field),
+                                       f"{what} matched without giving an ID"))
+
     kept = []
     for r in result.records:
         rid = r.get(config.format.id_field)
@@ -61,7 +65,7 @@ def build(root, config, extra_findings=()):
         kept.append((r, node))
 
     for item in sorted(items, key=lambda i: i["merge"]):     # merge sources last
-        links, merge = item.pop("links"), item.pop("merge")
+        links, merge, at = item.pop("links"), item.pop("merge"), item.pop("at")
         if merge and item["id"] in nodes:
             nodes[item["id"]]["fields"].update(item["fields"])
         elif merge or item["id"] in nodes:
@@ -76,9 +80,12 @@ def build(root, config, extra_findings=()):
         parents_text = r.get(roles.parents)
         derived = None
         if derived_re and (m := derived_re.search(parents_text)):
-            derived = m.group(1)
             parents_text = parents_text.replace(m.group(0), " ")
-            add_edge(derived, rid, "derived")
+            derived = m.group(1)
+            if derived:
+                add_edge(derived, rid, "derived")
+            else:
+                unset(r, "links.derived_pattern")
         parents = [] if parents_text.strip() == lk.none_value else ids(parents_text)
         for p in parents:
             add_edge(p, rid, "parent")
@@ -89,7 +96,12 @@ def build(root, config, extra_findings=()):
             continue
         used = set()
         for f in lk.uses_fields if uses_re else []:
-            used.update(m.group(1) if uses_re.groups else m.group(0) for m in uses_re.finditer(r.get(f)))
+            for m in uses_re.finditer(r.get(f)):
+                target = m.group(1) if uses_re.groups else m.group(0)
+                if target:
+                    used.add(target)
+                else:
+                    unset(r, "links.uses_pattern")
         for u in sorted(used):
             add_edge(rid, u, "uses")
         for f in lk.source_fields:

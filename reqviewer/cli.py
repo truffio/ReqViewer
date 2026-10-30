@@ -28,6 +28,11 @@ def main(argv=None):
     except (ConfigError, OSError) as exc:
         print(f"reqviewer: error: {exc}", file=sys.stderr)
         return 2
+    except Exception as exc:                    # last defence: a defect must not give a traceback
+        print(f"reqviewer: error: {type(exc).__name__}: {' '.join(str(exc).split())}", file=sys.stderr)
+        return 2
+    if hasattr(sys.stdout, "reconfigure"):      # a path the console cannot encode must not fail the run
+        sys.stdout.reconfigure(errors="backslashreplace")
     records = sum(1 for n in data["nodes"] if n["kind"] in ("req", "asm"))
     print(f"wrote {out} ({records} record(s), {len(data['nodes'])} node(s), {len(data['edges'])} link(s))")
     return 0

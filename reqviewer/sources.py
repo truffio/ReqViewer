@@ -14,6 +14,7 @@ def load_sources(root, config):
         if not path.is_file():
             continue
         name = rel(root, path)
+        first = len(items)
 
         def problem(msg):
             problems.append(Finding(name, 0, "error", "FORMAT", "", msg))
@@ -23,9 +24,11 @@ def load_sources(root, config):
                 items += _yaml(path, src, problem)
             else:
                 text = path.read_text(encoding="utf-8-sig")
-                items += (_table if src.type == "table" else _heading)(text, src)
+                items += _table(text, src) if src.type == "table" else _heading(text, src, problem)
         except (OSError, UnicodeDecodeError) as exc:
             problem(f"cannot read: {exc}")
+        for item in items[first:]:
+            item["at"] = (name, item["at"])
     return items, problems
 
 
@@ -39,7 +42,7 @@ def _cell(cells, i):
 
 def _table(text, src):
     items = []
-    for line in split_lines(text):
+    for lineno, line in enumerate(split_lines(text), 1):
         if not line.startswith("|"):
             continue
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
@@ -55,18 +58,21 @@ def _table(text, src):
             links += [(ln, t) for t in dict.fromkeys(targets) if t]
         items.append({"id": cells[0], "kind": src.kind, "merge": src.merge,
                       "title": title[:src.title_max] if src.title_max else title,
-                      "fields": {k: _cell(cells, i) for k, i in src.columns.items()}, "links": links})
+                      "fields": {k: _cell(cells, i) for k, i in src.columns.items()}, "links": links,
+                      "at": lineno})
     return items
 
 
-def _heading(text, src):
+def _heading(text, src, problem):
     items = []
-    for line in split_lines(text):
+    for lineno, line in enumerate(split_lines(text), 1):
         m = re.search(src.pattern, line)
-        if m:
+        if m and not m.group(1):
+            problem(f"line {lineno}: the pattern matched without an ID")
+        elif m:
             items.append({"id": m.group(1), "kind": src.kind, "merge": False,
                           "title": (m.group(2) if m.re.groups > 1 and m.group(2) else "").strip(),
-                          "fields": {}, "links": []})
+                          "fields": {}, "links": [], "at": lineno})
     return items
 
 
@@ -78,8 +84,11 @@ def _yaml(path, src, problem):
         return []
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8-sig"))
-    except yaml.YAMLError as exc:
+    except (yaml.YAMLError, ValueError, RecursionError) as exc:
         problem(f"cannot read: {exc}")
+        return []
+    if src.list_key and isinstance(data, dict) and src.list_key not in data:
+        problem(f"no key {src.list_key!r} at the top level")
         return []
     entries = data.get(src.list_key) if src.list_key and isinstance(data, dict) else data
     if entries is None:
@@ -91,10 +100,10 @@ def _yaml(path, src, problem):
     for n, e in enumerate(entries, 1):
         if not isinstance(e, dict):
             problem(f"entry {n} is not a mapping")
-        elif e.get(src.id_key) is None:
+        elif not _text(e.get(src.id_key)).strip():
             problem(f"entry {n} has no {src.id_key!r}")
         else:
-            items.append({"id": _text(e[src.id_key]), "kind": src.kind, "merge": False,
+            items.append({"id": _text(e[src.id_key]), "kind": src.kind, "merge": False, "at": 0,
                           "title": _text(e.get(src.title_key)), "status": _text(e.get(src.status_key)),
                           "fields": {str(k).capitalize(): _text(v) for k, v in e.items()}, "links": []})
     return items

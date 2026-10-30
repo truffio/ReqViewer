@@ -90,6 +90,43 @@ class ConfigTest(ProjectCase):
             with self.subTest(bad):
                 self.bad(f"[display.kinds.req]\ncolor = '{bad}'", "display.kinds.req.color")
         self.bad("[[sources]]\n" + SRC + "color = 'red'", "sources[0].color")
+        self.bad('[display.kinds.req]\ncolor = "#abc\\n"', "display.kinds.req.color")   # no trailing newline
+
+    def test_javascript_syntax_the_first_check_missed(self):
+        for p in ("(?#c)", r"\d++", "a*+", "a?+", "a{2}+", "(a)(?(1)b|c)"):
+            with self.subTest(p):
+                self.bad(f"[ids]\npatterns = ['{p}']", "ids.patterns[0]", "JavaScript")
+
+    def test_escaped_and_bracketed_syntax_is_not_rejected(self):
+        for p in (r"\(?P<x", r"\\\(?P<x", "[(?P<]", r"a\++", "[*+]+", r"\(\?i\)"):
+            with self.subTest(p):
+                parse(f"[ids]\npatterns = ['{p}']")
+
+    def test_malformed_values_give_config_errors(self):
+        cases = [("[[sources]]\ntype = ['table']", "sources[0].type"),
+                 ("[[sources]]\ntype = {a = 1}", "sources[0].type"),
+                 ("[ids]\npatterns = ['A{99999999999}']", "ids.patterns[0]"),
+                 ("[files]\nlevel_pattern = '(A{99999999999})'", "files.level_pattern"),
+                 ("[files]\nlevels = ['/x/*.md']", "files.levels[0]"),
+                 ("[files]\nlevels = ['C:/x/*.md']", "files.levels[0]"),
+                 ("[files]\nlevels = ['']", "files.levels[0]"),
+                 ("[files]\nlevels = ['a**b/*.md']", "files.levels[0]"),
+                 ("[ids]\npatterns = ['']", "ids.patterns[0]"),
+                 ("[ids]\npatterns = ['A-1', 'Z*']", "ids.patterns[1]"),
+                 ("[links]\nuses_pattern = 'Z*'", "links.uses_pattern"),
+                 ("[links]\nderived_pattern = '(Z)*'", "links.derived_pattern"),
+                 ("[[sources]]\n" + SRC + "title_max = -1", "sources[0].title_max"),
+                 ("[[sources]]\n" + SRC.replace("N-1", ".*"), "sources[0].id"),
+                 ("[[sources]]\n" + SRC + "links = [{ kind = '' }]", "links[0].kind"),
+                 ("[ids]\npatterns = ['" + "(" * 5000 + "']", "ids.patterns[0]")]
+        for toml, key in cases:
+            with self.subTest(toml[:60]):
+                self.bad(toml, key)
+
+    def test_deeply_nested_toml_is_a_config_error(self):
+        root = self.project({"reqviewer.toml": "a = " + "[" * 5000 + "]" * 5000})
+        with self.assertRaises(ConfigError):
+            config.load_config(root)
 
     def test_reserved_kinds(self):
         for kind in ("req", "asm", "missing"):
