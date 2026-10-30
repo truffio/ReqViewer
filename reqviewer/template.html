@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Requirements Viewer</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --panel-2: #f0f0ec; --ink: #1d1d1b; --ink-2: #5b5b57;
+  --line: #dcdcd6; --accent: #2f5fd0; --accent-ink: #ffffff; --hl: #fff2b3;
+  --err: #c0392b; --warn: #b7791f; --ok: #2e7d4f; --edge: #9a9a92; --sel: #2f5fd0;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161615; --panel: #1f1f1d; --panel-2: #272724; --ink: #ececE6; --ink-2: #a3a39b;
+    --line: #3a3a36; --accent: #7aa2ff; --accent-ink: #10131a; --hl: #5a4b12;
+    --err: #ff7b6b; --warn: #f0b552; --ok: #6fcf97; --edge: #77776f; --sel: #7aa2ff;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161615; --panel: #1f1f1d; --panel-2: #272724; --ink: #ececE6; --ink-2: #a3a39b;
+  --line: #3a3a36; --accent: #7aa2ff; --accent-ink: #10131a; --hl: #5a4b12;
+  --err: #ff7b6b; --warn: #f0b552; --ok: #6fcf97; --edge: #77776f; --sel: #7aa2ff;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.45 var(--sans); display: flex; flex-direction: column; }
+a { color: var(--accent); text-decoration: none; cursor: pointer; }
+a:hover { text-decoration: underline; }
+.id { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; }
+header { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 8px 16px;
+  background: var(--panel); border-bottom: 1px solid var(--line); }
+header h1 { font-size: 15px; margin: 0 6px 0 0; font-weight: 650; }
+header .counts { color: var(--ink-2); font-size: 12.5px; }
+.tabs { display: flex; gap: 2px; background: var(--panel-2); border-radius: 8px; padding: 2px; }
+.tabs button { border: 0; background: transparent; color: var(--ink-2); padding: 4px 12px; border-radius: 6px; font: inherit; cursor: pointer; }
+.tabs button.on { background: var(--panel); color: var(--ink); box-shadow: 0 0 0 1px var(--line); }
+input[type=search], select { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+input[type=search] { width: 220px; }
+label.chk { color: var(--ink-2); font-size: 12.5px; display: inline-flex; gap: 4px; align-items: center; }
+.spacer { flex: 1; }
+main { flex: 1; min-height: 0; display: grid; }
+.view { display: none; min-height: 0; }
+.view.on { display: grid; }
+#explorer { grid-template-columns: minmax(160px, var(--w1, 260px)) 7px minmax(240px, 1fr) 7px minmax(280px, var(--w3, 44%)); }
+#explorer > section { min-height: 0; overflow: auto; }
+.splitter { cursor: col-resize; touch-action: none; background: linear-gradient(var(--line), var(--line)) center / 1px 100% no-repeat; }
+.splitter:hover, .splitter:focus-visible, .splitter.drag { background-color: var(--panel-2); background-image: linear-gradient(var(--sel), var(--sel)); background-size: 2px 100%; outline: none; }
+body.resizing { cursor: col-resize; user-select: none; }
+#outline { background: var(--panel); padding: 6px 0 24px; }
+#outline details > summary { list-style: none; cursor: pointer; padding: 4px 12px; font-weight: 600; font-size: 12.5px; color: var(--ink-2); text-transform: uppercase; letter-spacing: .03em; }
+#outline details details > summary { text-transform: none; letter-spacing: 0; padding-left: 22px; font-weight: 600; color: var(--ink); }
+#outline summary::before { content: "▸ "; color: var(--ink-2); }
+#outline details[open] > summary::before { content: "▾ "; }
+#outline summary .n { color: var(--ink-2); font-weight: 400; }
+.item { display: flex; gap: 6px; align-items: baseline; padding: 2px 10px 2px 34px; cursor: pointer; border-left: 3px solid transparent; }
+.item:hover { background: var(--panel-2); }
+.item.on { background: var(--panel-2); border-left-color: var(--sel); }
+.item .t { flex: 1; min-width: 0; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.dot { width: 9px; height: 9px; border-radius: 3px; flex: none; align-self: center; }
+.flag { color: var(--err); font-size: 11px; }
+.flag.w { color: var(--warn); }
+#detail { padding: 16px 20px 40px; }
+#detail h2 { margin: 0 0 6px; font-size: 18px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.chip { font-size: 11.5px; padding: 1px 8px; border-radius: 999px; background: var(--panel-2); color: var(--ink-2); border: 1px solid var(--line); }
+.chip.err { color: var(--err); border-color: currentColor; }
+.chip.warn { color: var(--warn); border-color: currentColor; }
+.statement { font-size: 15.5px; line-height: 1.5; background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--sel); border-radius: 6px; padding: 10px 14px; margin: 0 0 14px; }
+.fields { display: grid; grid-template-columns: 120px 1fr; gap: 6px 14px; margin: 0; }
+.fields dt { color: var(--ink-2); font-size: 12.5px; padding-top: 1px; }
+.fields dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.fields dd p { margin: 0 0 6px; }
+.tbd { background: var(--hl); border-radius: 3px; padding: 0 3px; }
+h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-2); margin: 20px 0 8px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; margin: 0 0 8px; }
+.card .h { display: flex; gap: 8px; align-items: baseline; margin-bottom: 2px; }
+.card .suff { color: var(--ink-2); font-size: 12.5px; margin-top: 4px; }
+.findings li { margin: 2px 0; }
+.findings .error { color: var(--err); }
+.findings .warning { color: var(--warn); }
+.empty { color: var(--ink-2); font-style: italic; }
+#graphpane { position: relative; background: var(--panel); }
+#graphbar { position: sticky; top: 0; z-index: 2; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 6px 12px; background: var(--panel); border-bottom: 1px solid var(--line); font-size: 12.5px; color: var(--ink-2); }
+.legend { display: inline-flex; gap: 10px; flex-wrap: wrap; }
+.legend span { display: inline-flex; gap: 4px; align-items: center; }
+.legend svg { overflow: visible; }
+#graph { display: block; }
+#graph .node { cursor: pointer; }
+#graph .node rect { stroke-width: 1.4; }
+#graph .node:hover rect { stroke-width: 2.4; }
+#graph .node.sel rect { stroke: var(--sel); stroke-width: 3; }
+#graph text { fill: var(--ink); font-size: 11.5px; }
+#graph text.idt { font-family: var(--mono); font-weight: 650; font-size: 11.5px; }
+#graph text.sub { fill: var(--ink-2); font-size: 10.5px; }
+#graph text.lane { fill: var(--ink-2); font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; }
+#graph path { fill: none; stroke: var(--edge); stroke-width: 1.3; }
+#graph path.x { stroke-dasharray: 4 3; }
+#coverage, #findings { overflow: auto; padding: 14px 18px 40px; align-content: start; }
+.cov-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; color: var(--ink-2); }
+table.matrix { border-collapse: collapse; font-size: 12px; }
+table.matrix th, table.matrix td { border: 1px solid var(--line); padding: 2px 6px; }
+table.matrix thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; vertical-align: bottom; }
+table.matrix thead th.v { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; font-family: var(--mono); font-weight: 500; padding: 6px 2px; }
+table.matrix tbody th { position: sticky; left: 0; background: var(--panel); text-align: left; font-weight: 500; white-space: nowrap; }
+table.matrix td.m { text-align: center; color: var(--accent); min-width: 20px; }
+table.matrix td.n { color: var(--ink-2); text-align: right; }
+table.matrix tr.gap th, table.matrix th.gap, table.matrix tr.gap th a, table.matrix th.gap a { color: var(--err); }
+table.matrix td.stmt { color: var(--ink-2); max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+table.flist { border-collapse: collapse; width: 100%; font-size: 13px; }
+table.flist th, table.flist td { text-align: left; border-bottom: 1px solid var(--line); padding: 4px 8px; vertical-align: top; }
+@media (max-width: 900px) {
+  #explorer { grid-template-columns: 1fr; grid-auto-rows: minmax(260px, auto); overflow: auto; }
+  #explorer > section { border-bottom: 1px solid var(--line); max-height: none; }
+  .splitter { display: none; }
+  input[type=search] { width: 100%; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Aeronef requirements</h1>
+  <span class="counts" id="counts"></span>
+  <div class="tabs" role="tablist">
+    <button data-view="explorer" class="on">Explorer</button>
+    <button data-view="coverage">Coverage</button>
+    <button data-view="findings">Findings</button>
+  </div>
+  <span class="spacer"></span>
+  <input type="search" id="q" placeholder="Search ID or text…">
+  <select id="ftype"><option value="">All types</option></select>
+  <select id="fstatus"><option value="">All statuses</option></select>
+  <label class="chk"><input type="checkbox" id="ftbd"> Open TBD/TBR</label>
+  <label class="chk"><input type="checkbox" id="ffind"> Has findings</label>
+  <select id="colorby" title="Colour by">
+    <option value="section">Colour: section</option>
+    <option value="type">Colour: type</option>
+    <option value="status">Colour: status</option>
+  </select>
+</header>
+<main>
+  <div class="view on" id="explorer">
+    <section id="outline"></section>
+    <div class="splitter" data-pane="w1" role="separator" aria-orientation="vertical" aria-label="Resize outline" tabindex="0" title="Drag to resize, double-click to reset"></div>
+    <section id="detail"></section>
+    <div class="splitter" data-pane="w3" role="separator" aria-orientation="vertical" aria-label="Resize graph" tabindex="0" title="Drag to resize, double-click to reset"></div>
+    <section id="graphpane">
+      <div id="graphbar">
+        <label class="chk"><input type="checkbox" id="depth2"> Two levels</label>
+        <label class="chk"><input type="checkbox" id="showx" checked> Cross-links</label>
+        <span class="legend">
+          <span><svg width="22" height="6"><path d="M0 3H22" stroke="var(--edge)" stroke-width="1.5"/></svg>decomposition</span>
+          <span>cross-links are grouped by kind below the tree</span>
+        </span>
+      </div>
+      <svg id="graph" role="img" aria-label="Neighbourhood of the selected requirement"></svg>
+    </section>
+  </div>
+  <div class="view" id="coverage"></div>
+  <div class="view" id="findings"></div>
+</main>
+<script>
+const DATA = /*DATA*/null;
+const ID_RE = /(?<![\w-])(?:L0-(?:OBJ|CON|SUC|ASM)-\d+|L\d+-AER(?:-[A-Z0-9]+)*-\d+|N-\d{3}|SC-\d{3}|SH-\d{2}|P-[A-Z]+-\d+|DD-\d+)\b/g;
+const KIND_LABEL = { req: "Requirement", asm: "Assumption", param: "Parameter", need: "Need", scenario: "Scenario",
+  stakeholder: "Stakeholder", decision: "Design decision", missing: "Unresolved reference" };
+const EDGE_LABEL = { parent: "decomposes", derived: "derived from", uses: "uses parameter", source: "source",
+  refers: "refers to", affects: "affects", exercises: "exercises", stakeholder: "stakeholder" };
+const REVERSE_LABEL = { uses: "used by", source: "cited as source by", refers: "referred to by",
+  affects: "affected by", exercises: "exercised by", stakeholder: "needs of this stakeholder" };
+const PALETTE = ["#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2", "#edc948", "#b07aa1", "#ff9da7",
+  "#9c755f", "#86bcb6", "#d37295", "#8cd17d", "#a0cbe8", "#bab0ac"];
+const KIND_COLOR = { param: "#8c8c84", need: "#59a14f", scenario: "#76b7b2", stakeholder: "#9c755f",
+  decision: "#b07aa1", missing: "#e15759", asm: "#edc948" };
+
+const byId = new Map(DATA.nodes.map(n => [n.id, n]));
+const outE = new Map(), inE = new Map();
+for (const e of DATA.edges) {
+  (outE.get(e.from) || outE.set(e.from, []).get(e.from)).push(e);
+  (inE.get(e.to) || inE.set(e.to, []).get(e.to)).push(e);
+}
+const outs = (id, kinds) => (outE.get(id) || []).filter(e => !kinds || kinds.includes(e.kind));
+const ins = (id, kinds) => (inE.get(id) || []).filter(e => !kinds || kinds.includes(e.kind));
+const children = id => outs(id, ["parent", "derived"]).map(e => e.to);
+const parents = id => ins(id, ["parent", "derived"]).map(e => e.from);
+const uniq = a => [...new Set(a)];
+const reqs = DATA.nodes.filter(n => n.kind === "req");
+const levels = uniq(reqs.map(n => n.level)).sort();
+const findingsOf = id => DATA.findings[id] || [];
+const isTbd = n => n.fields && n.fields["TBD/TBR"] && n.fields["TBD/TBR"].trim() !== "—";
+
+// ------------------------------------------------------------------ colour
+const colourKeys = {};
+function colourOf(n) {
+  if (n.kind !== "req") return KIND_COLOR[n.kind] || "#8c8c84";
+  const by = document.getElementById("colorby").value;
+  const key = by === "section" ? n.level + "/" + n.section : (n[by] || "?");
+  const keys = colourKeys[by] || (colourKeys[by] = []);
+  if (!keys.includes(key)) keys.push(key);
+  return PALETTE[keys.indexOf(key) % PALETTE.length];
+}
+(function seedColours() {
+  colourKeys.section = DATA.sections.map(s => s.level + "/" + s.section);
+})();
+
+// ------------------------------------------------------------------ text
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const tidy = s => String(s ?? "").replace(/\s*\n\s*/g, " ").trim();
+function linkify(s) {
+  return esc(tidy(s)).replace(ID_RE, id => byId.has(id) ? `<a data-id="${id}" class="id">${id}</a>` : `<span class="id">${id}</span>`);
+}
+function paragraphs(s) {
+  return tidy(s).split(/\s(?=Sufficiency:)/).map(p => `<p>${linkify(p)}</p>`).join("");
+}
+function short(n, len) {
+  // drop the repeated subject ("The Aeronef project shall …") so labels show what differs
+  const t = tidy(n.title || "").replace(/^The [\w\s-]{1,40}? shall /, "… ");
+  return t.length > len ? t.slice(0, len - 1) + "…" : t;
+}
+
+// ------------------------------------------------------------------ filters
+const state = { sel: null, view: "explorer" };
+function matches(n) {
+  const q = document.getElementById("q").value.trim().toLowerCase();
+  const ft = document.getElementById("ftype").value, fs = document.getElementById("fstatus").value;
+  if (ft && n.type !== ft) return false;
+  if (fs && n.status !== fs) return false;
+  if (document.getElementById("ftbd").checked && !isTbd(n)) return false;
+  if (document.getElementById("ffind").checked && !findingsOf(n.id).length) return false;
+  if (!q) return true;
+  return (n.id + " " + (n.title || "") + " " + Object.values(n.fields || {}).join(" ")).toLowerCase().includes(q);
+}
+function fillSelect(id, values) {
+  const el = document.getElementById(id);
+  for (const v of uniq(values).filter(Boolean).sort()) el.insertAdjacentHTML("beforeend", `<option>${esc(v)}</option>`);
+}
+fillSelect("ftype", reqs.map(n => n.type));
+fillSelect("fstatus", DATA.nodes.filter(n => n.kind === "req" || n.kind === "asm").map(n => n.status));
+
+// ------------------------------------------------------------------ outline
+const openGroups = new Set(["g:" + (levels[0] || "L0")]);
+function outline() {
+  const groups = [];
+  for (const lv of uniq(DATA.sections.map(s => s.level))) {
+    const subs = DATA.sections.filter(s => s.level === lv).map(s => ({
+      key: "s:" + lv + "/" + s.section, label: s.section,
+      items: DATA.nodes.filter(n => (n.kind === "req" || n.kind === "asm") && n.level === lv && n.section === s.section)
+    }));
+    groups.push({ key: "g:" + lv, label: lv, subs });
+  }
+  const other = [["need", "Needs"], ["scenario", "Scenarios"], ["stakeholder", "Stakeholders"],
+    ["param", "Parameters"], ["decision", "Design decisions"], ["missing", "Unresolved references"]]
+    .map(([k, label]) => ({ key: "s:" + k, label, items: DATA.nodes.filter(n => n.kind === k) }))
+    .filter(s => s.items.length);
+  if (other.length) groups.push({ key: "g:other", label: "Sources and links", subs: other });
+
+  const filtering = document.getElementById("q").value || document.getElementById("ftype").value ||
+    document.getElementById("fstatus").value || document.getElementById("ftbd").checked || document.getElementById("ffind").checked;
+  let html = "";
+  for (const g of groups) {
+    const subsHtml = g.subs.map(s => {
+      const items = s.items.filter(matches);
+      if (filtering && !items.length) return "";
+      const open = filtering || openGroups.has(s.key) || items.some(n => n.id === state.sel);
+      return `<details data-key="${s.key}" ${open ? "open" : ""}><summary>${esc(s.label)} <span class="n">${items.length}</span></summary>` +
+        (items.length ? items.map(itemHtml).join("") : `<div class="item empty">empty</div>`) + `</details>`;
+    }).join("");
+    if (filtering && !subsHtml) continue;
+    const open = filtering || openGroups.has(g.key) || g.subs.some(s => s.items.some(n => n.id === state.sel));
+    html += `<details data-key="${g.key}" ${open ? "open" : ""}><summary>${esc(g.label)}</summary>${subsHtml}</details>`;
+  }
+  const el = document.getElementById("outline");
+  el.innerHTML = html || `<div class="item empty">No match</div>`;
+  el.querySelectorAll("details").forEach(d => d.addEventListener("toggle", () => {
+    d.open ? openGroups.add(d.dataset.key) : openGroups.delete(d.dataset.key);
+  }));
+  const on = el.querySelector(".item.on");
+  if (on) on.scrollIntoView({ block: "nearest" });
+}
+function itemHtml(n) {
+  const f = findingsOf(n.id);
+  const flag = f.some(x => x.severity === "error") ? `<span class="flag" title="errors">●</span>` :
+    f.length ? `<span class="flag w" title="warnings">●</span>` : "";
+  return `<div class="item${n.id === state.sel ? " on" : ""}" data-id="${n.id}"><span class="dot" style="background:${colourOf(n)}"></span>` +
+    `<span class="id">${n.id}</span><span class="t" title="${esc(tidy(n.title || ""))}">${esc(short(n, Infinity))}</span>${flag}</div>`;
+}
+
+// ------------------------------------------------------------------ detail
+function detail() {
+  const el = document.getElementById("detail");
+  const n = byId.get(state.sel);
+  if (!n) { el.innerHTML = `<p class="empty">Select a requirement in the outline.</p>`; return; }
+  const f = findingsOf(n.id);
+  const errs = f.filter(x => x.severity === "error").length, warns = f.length - errs;
+  let h = `<h2><span class="dot" style="background:${colourOf(n)}"></span><span class="id">${n.id}</span></h2><div class="chips">` +
+    `<span class="chip">${KIND_LABEL[n.kind] || n.kind}</span>` +
+    ["level", "section", "type", "status"].filter(k => n[k]).map(k => `<span class="chip">${esc(n[k])}</span>`).join("") +
+    (isTbd(n) ? `<span class="chip warn">TBD/TBR open</span>` : "") +
+    (errs ? `<span class="chip err">${errs} error(s)</span>` : "") + (warns ? `<span class="chip warn">${warns} warning(s)</span>` : "") +
+    (n.file ? `<span class="chip">${esc(n.file)}:${n.line}</span>` : "") + `</div>`;
+
+  if (n.kind === "req") {
+    h += `<div class="statement">${linkify(n.fields.Statement)}</div><dl class="fields">`;
+    const [method, rest] = splitOnce(n.fields.Verification || "", /\s+[—-]\s+/);
+    const [proc, crit] = splitOnce(rest || "", /;\s*success criteria:\s*/);
+    const rows = [["Rationale", paragraphs(n.fields.Rationale)], ["Parent(s)", linkify(n.fields["Parent(s)"])],
+      ["Source", linkify(n.fields.Source)], ["Allocated to", linkify(n.fields["Allocated to"])],
+      ["Verification", `<p><b>${esc(method)}</b>${proc ? " · " + linkify(proc) : ""}</p>${crit ? `<p>${linkify(crit)}</p>` : ""}`],
+      ["Parameters", paramList(n)], ["TBD/TBR", isTbd(n) ? `<span class="tbd">${linkify(n.fields["TBD/TBR"])}</span>` : "—"],
+      ["Criticality", esc(n.fields.Criticality)], ["Owner", esc(n.fields.Owner)], ["Version", esc(n.fields.Version)]];
+    h += rows.map(([k, v]) => `<dt>${k}</dt><dd>${v || "—"}</dd>`).join("") + `</dl>`;
+    const kids = uniq(children(n.id));
+    h += `<h3>Decomposition — ${kids.length} child requirement(s)</h3>`;
+    h += kids.length ? kids.map(cardHtml).join("") :
+      `<p class="empty">${n.fields["Allocated to"] && n.fields["Allocated to"].trim() !== "—" ?
+        "No child requirement yet: allocated to " + esc(n.fields["Allocated to"]) + "." : "Leaf requirement."}</p>`;
+  } else {
+    h += n.title ? `<div class="statement">${linkify(n.title)}</div>` : "";
+    h += `<dl class="fields">` + Object.entries(n.fields || {}).filter(([k]) => k !== "ID")
+      .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${paragraphs(v) || "—"}</dd>`).join("") + `</dl>`;
+    if (n.missing) h += `<p class="empty">Referenced but not defined in the level files, ConOps, registers or parameter database.</p>`;
+  }
+  h += linkSection("Links from here", outs(n.id).filter(e => !["parent", "derived"].includes(e.kind)), "to");
+  h += linkSection("Links to here", ins(n.id).filter(e => n.kind !== "req" || !["parent", "derived"].includes(e.kind)), "from");
+  if (f.length) h += `<h3>Findings</h3><ul class="findings">` +
+    f.map(x => `<li class="${x.severity}"><b>${x.code}</b> ${esc(x.message)}</li>`).join("") + `</ul>`;
+  el.innerHTML = h;
+  el.scrollTop = 0;
+}
+function splitOnce(s, re) { const m = s.match(re); return m ? [s.slice(0, m.index), s.slice(m.index + m[0].length)] : [s, ""]; }
+function paramList(n) {
+  const ps = outs(n.id, ["uses"]).map(e => byId.get(e.to));
+  if (!ps.length) return "—";
+  return ps.map(p => {
+    const others = ins(p.id, ["uses"]).length - 1;
+    const v = p.fields.Value ? ` = ${esc(p.fields.Value)} ${esc(p.fields.Unit || "")}` : "";
+    return `<a data-id="${p.id}" class="id">${p.id}</a> <span class="chip${p.missing ? " warn" : ""}">${esc(p.status || "")}${v}</span>` +
+      (others > 0 ? ` <span class="t">shared with ${others} other</span>` : "");
+  }).join("<br>");
+}
+function cardHtml(id) {
+  const c = byId.get(id); if (!c) return "";
+  const suff = (tidy(c.fields && c.fields.Rationale).match(/Sufficiency:.*$/) || [""])[0];
+  return `<div class="card"><div class="h"><span class="dot" style="background:${colourOf(c)}"></span><a data-id="${id}" class="id">${id}</a>` +
+    `<span class="chip">${esc(c.level || KIND_LABEL[c.kind])}</span></div><div>${linkify(c.fields && c.fields.Statement || c.title)}</div>` +
+    (suff ? `<div class="suff">${linkify(suff)}</div>` : "") + `</div>`;
+}
+function linkSection(title, es, end) {
+  if (!es.length) return "";
+  const byKind = {};
+  for (const e of es) (byKind[e.kind] = byKind[e.kind] || []).push(e[end]);
+  return `<h3>${title}</h3><dl class="fields">` + Object.entries(byKind).map(([k, ids]) =>
+    `<dt>${EDGE_LABEL[k] || k}</dt><dd>${uniq(ids).map(id => `<a data-id="${id}" class="id" title="${esc(short(byId.get(id) || {}, 120))}">${id}</a>`).join(", ")}</dd>`).join("") + `</dl>`;
+}
+
+// ------------------------------------------------------------------ graph
+const NW = 156, NH = 44, GX = 14, GY = 46, PAD = 16;
+const expanded = new Set();
+function graph() {
+  const svg = document.getElementById("graph");
+  const n = byId.get(state.sel);
+  const W = Math.max(document.getElementById("graphpane").clientWidth, 340);
+  if (!n) { svg.setAttribute("width", W); svg.setAttribute("height", 60); svg.innerHTML = ""; return; }
+  const two = document.getElementById("depth2").checked, showX = document.getElementById("showx").checked;
+  const p1 = uniq(parents(n.id)), c1 = uniq(children(n.id));
+  const p2 = two ? uniq(p1.flatMap(parents)).filter(id => id !== n.id) : [];
+  const c2 = two ? uniq(c1.flatMap(children)).filter(id => id !== n.id) : [];
+  const lanes = [];
+  if (p2.length) lanes.push(["Grandparents", p2]);
+  lanes.push(["Parents", p1]);
+  lanes.push(["Selected", [n.id]]);
+  lanes.push(["Children", c1]);
+  if (c2.length) lanes.push(["Grandchildren", c2]);
+  const inTree = new Set(lanes.flatMap(l => l[1]));
+  // cross-links are grouped into lanes by link kind and direction, e.g. "refers to", "affected by"
+  const xEdges = showX ? [...outs(n.id), ...ins(n.id)].filter(e => !["parent", "derived"].includes(e.kind)) : [];
+  const xGroups = {};
+  for (const e of xEdges) {
+    const out = e.from === n.id, other = out ? e.to : e.from;
+    if (inTree.has(other)) continue;
+    const label = out ? EDGE_LABEL[e.kind] || e.kind : REVERSE_LABEL[e.kind] || e.kind;
+    (xGroups[label] = xGroups[label] || []).push(other);
+  }
+  for (const [label, ids] of Object.entries(xGroups)) lanes.push([label[0].toUpperCase() + label.slice(1), uniq(ids), true]);
+
+  const perRow = Math.max(1, Math.floor((W - 2 * PAD + GX) / (NW + GX)));
+  const pos = new Map(); let y = PAD; let body = "";
+  for (const [label, ids0, cross] of lanes) {
+    const key = label, all = ids0;
+    const cap = expanded.has(key) ? all.length : perRow * 2;
+    const ids = all.length > cap ? all.slice(0, cap - 1) : all;
+    const more = all.length - ids.length;
+    body += `<text class="lane" x="${PAD}" y="${y + 10}">${esc(label)} · ${all.length}</text>`;
+    y += 16;
+    const cells = more ? [...ids, "__more"] : ids;
+    if (!cells.length) { body += `<text class="sub" x="${PAD}" y="${y + 14}">none</text>`; y += 24 + GY / 2; continue; }
+    const rows = Math.ceil(cells.length / perRow);
+    for (let r = 0; r < rows; r++) {
+      const row = cells.slice(r * perRow, (r + 1) * perRow);
+      const rowW = row.length * NW + (row.length - 1) * GX;
+      let x = Math.max(PAD, (W - rowW) / 2);
+      for (const id of row) {
+        if (id === "__more") {
+          body += `<g class="node more" data-more="${esc(key)}"><rect x="${x}" y="${y}" width="${NW}" height="${NH}" rx="8" fill="var(--panel-2)" stroke="var(--line)"/>` +
+            `<text x="${x + NW / 2}" y="${y + NH / 2 + 4}" text-anchor="middle">+${more} more</text></g>`;
+        } else {
+          pos.set(id, { x, y, cross });
+          body += nodeSvg(id, x, y, id === n.id);
+        }
+        x += NW + GX;
+      }
+      y += NH + 10;
+    }
+    y += GY - 10;
+  }
+  // edges drawn under nodes
+  let edgesSvg = "";
+  const curve = (a, b, cls) => {
+    const x1 = a.x + NW / 2, y1 = a.y + NH, x2 = b.x + NW / 2, y2 = b.y, my = (y1 + y2) / 2;
+    return `<path class="${cls}" d="M${x1} ${y1} C${x1} ${my} ${x2} ${my} ${x2} ${y2}"/>`;
+  };
+  const tree = [[p2, p1], [p1, [n.id]], [[n.id], c1], [c1, c2]];
+  for (const [ups, downs] of tree) for (const u of ups) for (const d of downs) {
+    if (pos.has(u) && pos.has(d) && children(u).includes(d)) edgesSvg += curve(pos.get(u), pos.get(d), "");
+  }
+  svg.setAttribute("width", W); svg.setAttribute("height", y + PAD);
+  svg.innerHTML = edgesSvg + body;
+}
+function nodeSvg(id, x, y, sel) {
+  const m = byId.get(id) || { id, kind: "missing", title: "" };
+  const c = colourOf(m);
+  const sub = m.kind === "req" || m.kind === "asm" ? short(m, 26) : (KIND_LABEL[m.kind] + (m.title ? " · " + short(m, 16) : ""));
+  return `<g class="node${sel ? " sel" : ""}" data-id="${id}"><title>${esc(id + " — " + tidy(m.title || ""))}</title>` +
+    `<rect x="${x}" y="${y}" width="${NW}" height="${NH}" rx="8" fill="${c}22" stroke="${c}"${m.missing ? ' stroke-dasharray="3 3"' : ""}/>` +
+    `<rect x="${x}" y="${y}" width="5" height="${NH}" rx="2" fill="${c}" stroke="none"/>` +
+    `<text class="idt" x="${x + 12}" y="${y + 17}">${esc(id)}</text>` +
+    `<text class="sub" x="${x + 12}" y="${y + 33}">${esc(sub)}</text></g>`;
+}
+
+// ------------------------------------------------------------------ coverage
+function coverage() {
+  const el = document.getElementById("coverage");
+  const rowLv = el.querySelector("#covrow")?.value || levels[0] || "L0";
+  const colOpts = [...levels.filter(l => l > rowLv).map(l => [l, "Level " + l]), ["alloc", "Allocation (Allocated to)"]];
+  const colSel = el.querySelector("#covcol")?.value;
+  const colLv = colOpts.some(o => o[0] === colSel) ? colSel : colOpts[0][0];
+  const rows = reqs.filter(n => n.level === rowLv && matches(n));
+  let cols, has;
+  if (colLv === "alloc") {
+    cols = uniq(rows.flatMap(r => tidy(r.fields["Allocated to"]).split(/[,;]\s*/))).filter(x => x && x !== "—").sort();
+    has = (r, c) => tidy(r.fields["Allocated to"]).split(/[,;]\s*/).includes(c);
+  } else {
+    cols = reqs.filter(n => n.level === colLv).map(n => n.id);
+    has = (r, c) => parents(c).includes(r.id);
+  }
+  const colHasParent = c => colLv === "alloc" || rows.some(r => has(r, c)) || parents(c).length;
+  let h = `<div class="cov-controls">Rows <select id="covrow">${levels.map(l => `<option ${l === rowLv ? "selected" : ""}>${l}</option>`).join("")}</select>` +
+    `Columns <select id="covcol">${colOpts.map(([v, t]) => `<option value="${v}" ${v === colLv ? "selected" : ""}>${t}</option>`).join("")}</select>` +
+    `<span>${rows.length} rows × ${cols.length} columns. Red rows have no child requirement; red columns have no parent.</span></div>`;
+  if (!rows.length) { el.innerHTML = h + `<p class="empty">No requirements at ${rowLv} match the filters.</p>`; bindCoverage(el); return; }
+  h += `<table class="matrix"><thead><tr><th>${rowLv}</th><th>Children</th>` +
+    cols.map(c => `<th class="v${colHasParent(c) ? "" : " gap"}">${colLv === "alloc" ? esc(c) : `<a data-id="${c}">${c}</a>`}</th>`).join("") +
+    `<th>Statement</th></tr></thead><tbody>`;
+  for (const r of rows) {
+    const kids = children(r.id).length;
+    h += `<tr class="${kids ? "" : "gap"}"><th><a data-id="${r.id}" class="id">${r.id}</a></th><td class="n">${kids}</td>` +
+      cols.map(c => `<td class="m">${has(r, c) ? "●" : ""}</td>`).join("") + `<td class="stmt" title="${esc(tidy(r.title))}">${esc(short(r, 110))}</td></tr>`;
+  }
+  el.innerHTML = h + `</tbody></table>`;
+  bindCoverage(el);
+}
+function bindCoverage(el) { el.querySelectorAll("select").forEach(s => s.addEventListener("change", coverage)); }
+
+// ------------------------------------------------------------------ findings
+function findingsView() {
+  const el = document.getElementById("findings");
+  const all = Object.entries(DATA.findings).flatMap(([id, fs]) => fs.map(f => ({ id, ...f })))
+    .filter(f => !f.id || !byId.has(f.id) || matches(byId.get(f.id)));
+  const counts = {};
+  for (const f of all) counts[f.code] = (counts[f.code] || 0) + 1;
+  let h = `<div class="cov-controls">${all.length} finding(s) from lint, trace check and parameter check: ` +
+    Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<span class="chip">${k} ${v}</span>`).join(" ") + `</div>`;
+  if (DATA.problems.length) h += `<p class="flag">${DATA.problems.length} parse problem(s): ${DATA.problems.map(esc).join("; ")}</p>`;
+  h += `<table class="flist"><thead><tr><th>Item</th><th>Severity</th><th>Code</th><th>Message</th></tr></thead><tbody>` +
+    all.map(f => `<tr><td>${f.id && byId.has(f.id) ? `<a data-id="${f.id}" class="id">${f.id}</a>` : esc(f.id || "—")}</td>` +
+      `<td class="findings"><span class="${f.severity}">${f.severity}</span></td><td>${f.code}</td><td>${esc(f.message)}</td></tr>`).join("") +
+    `</tbody></table>`;
+  el.innerHTML = h;
+}
+
+// ------------------------------------------------------------------ wiring
+function counts() {
+  const k = kind => DATA.nodes.filter(n => n.kind === kind).length;
+  const f = Object.values(DATA.findings).flat();
+  document.getElementById("counts").textContent =
+    `${k("req")} requirements · ${k("asm")} assumptions · ${DATA.edges.filter(e => e.kind === "parent").length} decomposition links · ` +
+    `${f.filter(x => x.severity === "error").length} errors, ${f.filter(x => x.severity === "warning").length} warnings`;
+}
+function render() {
+  if (state.view === "explorer") { outline(); detail(); graph(); }
+  else if (state.view === "coverage") coverage();
+  else findingsView();
+}
+function select(id) {
+  if (!byId.has(id)) return;
+  if (location.hash.slice(1) !== id) location.hash = id; else { state.sel = id; showView("explorer"); }
+}
+function showView(v) {
+  state.view = v;
+  document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.view === v));
+  document.querySelectorAll(".view").forEach(el => el.classList.toggle("on", el.id === v));
+  render();
+}
+document.addEventListener("click", ev => {
+  const more = ev.target.closest("[data-more]");
+  if (more) { expanded.add(more.dataset.more); graph(); return; }
+  const t = ev.target.closest("[data-id]");
+  if (t) { ev.preventDefault(); select(t.dataset.id); }
+});
+document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => showView(b.dataset.view)));
+["q", "ftype", "fstatus", "ftbd", "ffind", "colorby"].forEach(id =>
+  document.getElementById(id).addEventListener(id === "q" ? "input" : "change", render));
+["depth2", "showx"].forEach(id => document.getElementById(id).addEventListener("change", graph));
+window.addEventListener("hashchange", () => {
+  const id = decodeURIComponent(location.hash.slice(1));
+  if (byId.has(id)) { state.sel = id; expanded.clear(); showView("explorer"); }
+});
+// Resizable panes: --w1 is the outline width, --w3 the graph width; the detail pane takes the rest.
+const explorer = document.getElementById("explorer");
+const MIN = { w1: 160, w3: 280, mid: 240 };
+function setWidth(key, px) {
+  const total = explorer.clientWidth - 14;
+  const other = document.getElementById(key === "w1" ? "graphpane" : "outline").offsetWidth;
+  px = Math.round(Math.max(MIN[key], Math.min(px, total - other - MIN.mid)));
+  explorer.style.setProperty("--" + key, px + "px");
+  try { localStorage.setItem("viewer." + key, px); } catch (e) {}
+}
+try { ["w1", "w3"].forEach(k => { const v = localStorage.getItem("viewer." + k); if (v) explorer.style.setProperty("--" + k, v + "px"); }); } catch (e) {}
+document.querySelectorAll(".splitter").forEach(sp => {
+  const key = sp.dataset.pane;
+  const pane = document.getElementById(key === "w1" ? "outline" : "graphpane");
+  const sign = key === "w1" ? 1 : -1;
+  sp.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    sp.setPointerCapture(e.pointerId);
+    const x0 = e.clientX, w0 = pane.offsetWidth;
+    sp.classList.add("drag"); document.body.classList.add("resizing");
+    const move = ev => setWidth(key, w0 + sign * (ev.clientX - x0));
+    const up = () => {
+      sp.removeEventListener("pointermove", move); sp.removeEventListener("pointerup", up);
+      sp.classList.remove("drag"); document.body.classList.remove("resizing");
+      graph();
+    };
+    sp.addEventListener("pointermove", move); sp.addEventListener("pointerup", up);
+  });
+  sp.addEventListener("keydown", e => {
+    const d = { ArrowLeft: -16, ArrowRight: 16 }[e.key];
+    if (!d) return;
+    e.preventDefault(); setWidth(key, pane.offsetWidth + sign * d); graph();
+  });
+  sp.addEventListener("dblclick", () => {
+    explorer.style.removeProperty("--" + key);
+    try { localStorage.removeItem("viewer." + key); } catch (e) {}
+    graph();
+  });
+});
+let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => state.view === "explorer" && graph(), 120); });
+counts();
+const start = decodeURIComponent(location.hash.slice(1));
+state.sel = byId.has(start) ? start : (reqs[0] || DATA.nodes[0] || {}).id;
+showView(new URLSearchParams(location.search).get("view") || "explorer");
+</script>
+</body>
+</html>

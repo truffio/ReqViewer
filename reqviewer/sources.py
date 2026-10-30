@@ -1,0 +1,1 @@
+"""Source file discovery (placeholder)."""
