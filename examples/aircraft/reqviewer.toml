@@ -1,0 +1,99 @@
+# Reads a checkout of truffio/aircraft, read-only:
+#   python -m reqviewer --root <checkout> --config examples/aircraft/reqviewer.toml --out <file outside it>
+title = "Aeronef requirements"
+
+[format]
+heading_must_match_id = true
+
+[ids]
+patterns = [
+  'L0-(?:OBJ|CON|SUC|ASM)-\d+',
+  'L\d+-AER(?:-[A-Z0-9]+)*-\d+',
+  'N-\d{3}',
+  'SC-\d{3}',
+  'SH-\d{2}',
+  'P-[A-Z]+-\d+',
+  'DD-\d+',
+]
+
+[links]
+derived_pattern = '^Derived\s*\(\s*(\S+?)\s*\)\s*$'
+uses_pattern = 'P-[A-Z]+-\d+'
+uses_fields = ["Statement", "Parameters"]
+source_fields = ["Source"]
+refer_fields = ["Statement", "Rationale", "Verification", "TBD/TBR"]
+
+[display]
+detail_rows = ["Rationale", "Parent(s)", "Source", "Allocated to", "Verification", "Parameters",
+               "TBD/TBR", "Criticality", "Owner", "Version"]
+rationale_split = "Sufficiency:"
+criteria_marker = "success criteria:"
+
+[[sources]]
+type = "yaml"
+kind = "param"
+label = "Parameters"
+singular = "Parameter"
+color = "#8c8c84"
+file = "parameters/PARAMETERS.yaml"
+list_key = "parameters"
+
+[[sources]]
+type = "table"
+kind = "stakeholder"
+label = "Stakeholders"
+singular = "Stakeholder"
+color = "#9c755f"
+file = "specs/CONOPS.md"
+id = 'SH-\d+'
+title = 1
+columns = { Description = 2 }
+
+[[sources]]
+type = "table"
+kind = "need"
+label = "Needs"
+singular = "Need"
+color = "#59a14f"
+file = "specs/CONOPS.md"
+id = 'N-\d+'
+title = 2
+title_max = 90
+title_strip = '"“”'
+min_columns = 4
+require = { 1 = '^SH-\d+$' }
+columns = { Stakeholder = 1, Need = 2, "Meaning for the Aeronef" = 3 }
+links = [{ kind = "stakeholder", column = 1, label = "stakeholder", reverse_label = "needs of this stakeholder" }]
+
+[[sources]]
+type = "heading"
+kind = "scenario"
+label = "Scenarios"
+singular = "Scenario"
+color = "#76b7b2"
+file = "specs/CONOPS.md"
+pattern = '^#### (SC-\d+) — (.+)$'
+
+[[sources]]
+type = "table"
+kind = "scenario"
+file = "specs/CONOPS.md"
+merge = true
+id = 'SC-\d+'
+title = 1
+min_columns = 3
+require = { 1 = 'N-' }
+columns = { "Needs exercised" = 1, "D3 modes" = 2 }
+links = [{ kind = "exercises", column = 1, pattern = 'N-\d+', label = "exercises", reverse_label = "exercised by" }]
+
+[[sources]]
+type = "table"
+kind = "decision"
+label = "Design decisions"
+singular = "Design decision"
+color = "#b07aa1"
+file = "registers/DECISIONS.md"
+id = 'DD-\d+'
+title = 1
+title_max = 90
+columns = { Decision = 1, Rationale = 3 }

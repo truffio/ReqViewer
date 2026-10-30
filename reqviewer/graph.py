@@ -138,7 +138,7 @@ def meta(config, levels):
         for ln in s.links:
             edges[ln.kind] = {"label": ln.label or ln.kind,
                               "reverse": ln.reverse_label or f"{ln.label or ln.kind} (reverse)"}
-    kinds["missing"] = {"label": "Not defined", "group": "Not defined"}
+    kinds["missing"] = {"label": "Not defined", "group": "Not defined", "color": "#e15759"}
     for k, v in kinds.items():
         v.update(config.display.kinds.get(k, {}))
         v.setdefault("color", "")
