@@ -24,7 +24,9 @@ Rules:
 - Blank lines in a block are ignored.
 - Every block needs the ID field (`format.id_field`). A block without one is a problem and is dropped.
 - A duplicate field name in one block, an unknown field name (when `req_fields` or `asm_fields` is set), a line that is not a field line, and an unclosed block are each reported as a problem.
-- With `heading_must_match_id = true`, a `### ` heading just before a block must equal the block's ID.
+- With `heading_must_match_id = true`, a `### ` heading just before a block must equal the block's ID. Only blank lines may sit between them: any other line, such as prose, another heading or a section marker, cancels the heading.
+- A line that nearly is a fence (indented, with extra words after the name, another case, or `~~~` instead of backticks) is reported as a problem, so that a block is not skipped silently.
+- Files may start with a UTF-8 byte order mark. Lines end at LF, CRLF or CR; other characters, such as U+2028, do not end a line.
 
 ### Sections
 
@@ -36,15 +38,15 @@ Records can be grouped in sections with HTML comments, on lines of their own:
 <!-- END SECTION BREWING -->
 ```
 
-The section name uses letters, digits, `_` and `-`. Sections do not nest and each name is used once per file. A record outside any section goes in `format.default_section`. Unbalanced or misplaced markers are problems.
+The section name uses letters, digits, `_` and `-`. Sections do not nest and each name is used once per file. A record outside any section goes in `format.default_section`. Unbalanced or misplaced markers are problems, and so is a line that nearly is a marker (other case, a space in the name, text after the closing `-->`).
 
 ### Levels
 
-The level of a record comes from the name of its file. `files.levels` lists globs (relative to the root) for the level files, and `files.level_pattern` is a regular expression with one group, matched against the file name. With the defaults, `requirements/L1.md` is level `L1`. If the pattern does not match, the file stem is the level. Levels are sorted naturally (`L2` before `L10`). A record can override its level with the field named by the `level` role, when that field is present.
+The level of a record comes from the name of its file. `files.levels` lists globs (relative to the root) for the level files, and `files.level_pattern` is a regular expression with one group, searched in the file name. With the defaults, `requirements/L1.md` is level `L1`. If the pattern does not match, or its group is empty or unset, the file stem is the level. A glob must be relative and not empty; one that matches no file is reported as a warning in the Findings view, and the run goes on. Levels are sorted naturally (`L2` before `L10`). A record can override its level with the field named by the `level` role, when that field is present.
 
 ## Configuration
 
-The configuration is a TOML file, `reqviewer.toml` in the root by default. Every key is optional. An unknown key is an error that names the key. Regular expressions must compile in Python and must not use syntax that JavaScript lacks: `(?P<name>...)`, `(?P=name)` and inline flags such as `(?i)` are rejected.
+The configuration is a TOML file, `reqviewer.toml` in the root by default. Every key is optional. An unknown key is an error that names the key. Regular expressions must compile in Python and must not use syntax that JavaScript lacks: `(?P<name>...)`, `(?P=name)`, atomic groups `(?>...)`, comments `(?#...)`, conditionals `(?(1)...)`, possessive quantifiers such as `a++` and inline flags such as `(?i)` are rejected. A pattern for IDs (`ids.patterns`, `links.uses_pattern`, `links.derived_pattern`) must not match an empty string.
 
 ### Top level
 
@@ -121,7 +123,7 @@ A `refers` link skips the record's own parents, the `derived` target and anythin
 | `value_field` | `"Value"` | Field shown next to a used node, if present. |
 | `unit_field` | `"Unit"` | Unit of that value. |
 
-`[display.kinds.<kind>]` overrides how a node kind is shown. `<kind>` is `req`, `asm` or the `kind` of a source. Keys: `label` (name in the interface), `group` (outline group name) and `color` (`#rgb` or `#rrggbb`). The defaults are `label = "Requirement"` for `req` and `label = "Assumption"` for `asm`.
+`[display.kinds.<kind>]` overrides how a node kind is shown. `<kind>` is `req`, `asm`, `missing` (the placeholders for IDs that have no node) or the `kind` of a source. Keys: `label` (name in the interface), `group` (outline group name) and `color` (`#rgb` or `#rrggbb`). The defaults are `label = "Requirement"` for `req` and `label = "Assumption"` for `asm`.
 
 ## Sources
 
@@ -159,7 +161,7 @@ columns = { Stakeholder = 1, Need = 2 }   # field name -> cell index
 links = [{ kind = "stakeholder", column = 1, pattern = '' }]
 ```
 
-Cell indexes start at 0, which is the ID cell. A missing cell gives an empty value. Each entry of `links` makes links of the given `kind` from the node to each match of `pattern` in that cell, or to the whole cell if `pattern` is empty. A link may also set `label` and `reverse_label`, the texts shown for the link and for its reverse.
+Cell indexes start at 0, which is the ID cell. `title` defaults to 0, so a row without it is titled with its ID. `title_max` must not be negative, and `id` must not match an empty cell. A row whose ID is already taken by a record or an earlier row is dropped, with its links, and reported as `DUPLICATE_ID`. A missing cell gives an empty value. Each entry of `links` makes links of the given `kind` from the node to each match of `pattern` in that cell, or to the whole cell if `pattern` is empty. A link may also set `label` and `reverse_label`, the texts shown for the link and for its reverse.
 
 `merge = true` adds the fields and links to nodes that already exist and creates nothing; rows with no such node are skipped.
 
@@ -186,13 +188,13 @@ type = "yaml"
 kind = "param"
 label = "Parameters"
 file = "parameters.yaml"
-list_key = "parameters"    # key of the list; empty: the file itself is the list
+list_key = "parameters"    # key of the list; default "": the file itself is the list
 id_key = "id"
 title_key = "name"
 status_key = "status"
 ```
 
-Every key of an entry becomes a field, with the name capitalised. An empty value (`null`) is shown as empty text. An invalid file, or an entry that is not a mapping or has no ID, is reported as a problem and skipped.
+Every key of an entry becomes a field, with the name capitalised. An empty value (`null`) is shown as empty text. An invalid file, a `list_key` that the file does not have, or an entry that is not a mapping or has no ID (or an empty one), is reported as a problem and skipped. The defaults of the other keys are the ones shown: `id_key = "id"`, `title_key = "name"`, `status_key = "status"`.
 
 ## Findings
 
@@ -222,7 +224,8 @@ Anything else (not a list, a missing key, another severity, unreadable JSON) sto
 
 | Code | Severity | Meaning |
 | --- | --- | --- |
-| `FORMAT` | error | A problem found while reading a file: bad field line, unknown or duplicate field, missing ID, unclosed block, unbalanced section markers, heading that does not match the ID, unreadable file, or a source that could not be loaded. |
-| `DUPLICATE_ID` | error | Two records with the same ID. The first one is kept. |
+| `FORMAT` | error | A problem found while reading a file: bad field line, unknown or duplicate field, missing ID, unclosed block, a near-miss fence or section marker, unbalanced section markers, heading that does not match the ID, unreadable file, or a source that could not be loaded. A `files.levels` glob that matches no file is a `FORMAT` warning. |
+| `DUPLICATE_ID` | error | Two records, or a record and a source row, with the same ID. The first one is kept. |
 | `UNKNOWN_PARENT` | error | A parent ID that has no node. |
 | `DANGLING_REF` | warning | Any other reference to an ID that has no node. |
+| `SELF_PARENT` | warning | A record that lists itself as its parent. The link is not drawn. |

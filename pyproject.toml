@@ -1,9 +1,10 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "reqviewer"
+description = "Write a self-contained requirements viewer page from Markdown files."
 dynamic = ["version"]
 requires-python = ">=3.11"
 dependencies = []
