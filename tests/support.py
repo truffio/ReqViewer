@@ -5,6 +5,13 @@ from pathlib import Path
 
 from reqviewer import config, graph
 
+try:
+    import yaml  # noqa: F401
+    HAVE_YAML = True
+except ImportError:
+    HAVE_YAML = False
+needs_yaml = unittest.skipUnless(HAVE_YAML, "PyYAML is not installed")
+
 ROOT = Path(__file__).resolve().parent.parent
 SAMPLE = ROOT / "examples" / "sample"
 

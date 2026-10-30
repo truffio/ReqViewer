@@ -5,7 +5,7 @@ from unittest import mock
 
 from reqviewer import config
 from reqviewer.sources import load_sources
-from support import ProjectCase
+from support import ProjectCase, needs_yaml
 
 NEEDS = """\
 | ID | Who | Need | Meaning |
@@ -71,6 +71,7 @@ class SourcesTest(ProjectCase):
         items, problems = self.load({"needs.md": NEEDS}, toml)
         self.assertEqual((len(items), problems), (3, []))                   # missing file skipped silently
 
+    @needs_yaml
     def test_yaml_source(self):
         yaml = "things:\n  - {id: T-1, name: One, status: ok, unit: kg, empty: ~}\n  - {id: 2, name: Two}\n"
         toml = ('[[sources]]\ntype="yaml"\nkind="thing"\nfile="t.yaml"\nlist_key="things"\n')
@@ -80,11 +81,13 @@ class SourcesTest(ProjectCase):
         self.assertEqual(items[0]["fields"], {"Id": "T-1", "Name": "One", "Status": "ok", "Unit": "kg", "Empty": ""})
         self.assertEqual((items[0]["title"], items[0]["status"], items[1]["status"]), ("One", "ok", ""))
 
+    @needs_yaml
     def test_yaml_top_level_list(self):
         toml = '[[sources]]\ntype="yaml"\nkind="thing"\nfile="t.yaml"'
         items, problems = self.load({"t.yaml": "- {id: A, name: n}\n"}, toml)
         self.assertEqual(([i["id"] for i in items], problems), (["A"], []))
 
+    @needs_yaml
     def test_yaml_problems_are_reported(self):
         toml = '[[sources]]\ntype="yaml"\nkind="thing"\nfile="t.yaml"\nlist_key="things"'
         cases = {"things: [a, {id: X}, {name: no id}]\n": ("entry 1 is not a mapping", "entry 3 has no 'id'"),

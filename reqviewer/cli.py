@@ -20,9 +20,8 @@ def main(argv=None):
         if not args.root.is_dir():
             raise ConfigError(f"root is not a directory: {args.root}")
         config = load_config(args.root, args.config)
-        if args.findings:
-            checks.load_external(args.findings)
-        data = graph.build(args.root, config)
+        extra = checks.load_external(args.findings) if args.findings else []
+        data = graph.build(args.root, config, extra)
         out = args.out or args.root / config.out
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(render.render(data), encoding="utf-8")

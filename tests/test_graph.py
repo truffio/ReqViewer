@@ -4,12 +4,13 @@ import unittest
 from pathlib import Path
 
 from reqviewer import config, graph
-from support import SAMPLE, ProjectCase, req
+from support import SAMPLE, needs_yaml, ProjectCase, req
 
 REFS = '[ids]\npatterns = ["[A-Z]+-\\\\d+"]\n'
 P = "Parent(s)"
 
 
+@needs_yaml
 class SampleContractTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -84,7 +85,10 @@ class SampleContractTest(unittest.TestCase):
                          [("L0", "PURPOSE"), ("L0", "SAFETY"), ("L1", "BREWING"), ("L1", "HEATING"),
                           ("L1", "INTERFACE"), ("L2", "HEATER"), ("L2", "GRINDER"), ("L2", "General")])
 
-    def test_clean_sample_has_no_findings(self):
+    def test_sample_only_finding_is_its_deliberate_dangling_parameter(self):
+        f, = self.data["findings"].pop("L1-HTR-002")
+        self.assertEqual((f["code"], f["severity"]), ("DANGLING_REF", "warning"))
+        self.assertIn("PRM-099", f["message"])
         self.assertEqual((self.data["findings"], self.data["problems"]), ({}, []))
 
     def test_merge_added_fields_to_headings(self):
@@ -220,6 +224,7 @@ class GraphRulesTest(ProjectCase):
         self.assertIn("requirements/L0.md:1", f["message"])
         self.assertEqual(set(f), {"severity", "code", "message"})
 
+    @needs_yaml
     def test_source_problems_are_reported(self):
         toml = '[[sources]]\ntype="yaml"\nkind="p"\nfile="p.yaml"\nlist_key="items"'
         data = self.build({"p.yaml": "items: [1]\n"}, toml)
