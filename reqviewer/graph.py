@@ -144,6 +144,7 @@ def meta(config, levels):
     d = config.display
     return {"title": config.title, "storage_key": "reqviewer." + slug(config.title),
             "id_pattern": id_regex(config), "levels": levels, "roles": asdict(config.fields),
+            "id_field": config.format.id_field, "uses_fields": config.links.uses_fields,
             "none_value": config.links.none_value, "detail_rows": d.detail_rows,
             "label_strip": d.label_strip, "rationale_split": d.rationale_split,
             "criteria_marker": d.criteria_marker, "value_field": d.value_field,

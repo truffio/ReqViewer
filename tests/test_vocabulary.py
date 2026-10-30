@@ -18,7 +18,6 @@ class VocabularyTest(unittest.TestCase):
         self.assertGreater(len(files), 8)
         self.assertEqual(self.hits(files), [])
 
-    @unittest.expectedFailure     # template.html is rewritten in #10; drop this decorator then
     def test_no_project_vocabulary_in_the_template(self):
         self.assertEqual(self.hits([ROOT / "reqviewer" / "template.html"]), [])
 

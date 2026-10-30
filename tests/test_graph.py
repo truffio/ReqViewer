@@ -21,7 +21,8 @@ class SampleContractTest(unittest.TestCase):
 
     def test_meta(self):
         meta = self.data["meta"]
-        self.assertEqual(list(meta), ["title", "storage_key", "id_pattern", "levels", "roles", "none_value",
+        self.assertEqual(list(meta), ["title", "storage_key", "id_pattern", "levels", "roles", "id_field",
+                                      "uses_fields", "none_value",
                                       "detail_rows", "label_strip", "rationale_split", "criteria_marker",
                                       "value_field", "unit_field", "kinds", "edges"])
         self.assertEqual(meta["title"], "BrewBox requirements")

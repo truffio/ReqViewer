@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Requirements Viewer</title>
+<title>Requirements</title>
 <style>
 :root {
   --bg: #f7f7f5; --panel: #ffffff; --panel-2: #f0f0ec; --ink: #1d1d1b; --ink-2: #5b5b57;
@@ -25,6 +25,7 @@
   --err: #ff7b6b; --warn: #f0b552; --ok: #6fcf97; --edge: #77776f; --sel: #7aa2ff;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; }
 body { background: var(--bg); color: var(--ink); font: 14px/1.45 var(--sans); display: flex; flex-direction: column; }
 a { color: var(--accent); text-decoration: none; cursor: pointer; }
@@ -121,7 +122,7 @@ table.flist th, table.flist td { text-align: left; border-bottom: 1px solid var(
 </head>
 <body>
 <header>
-  <h1>Aeronef requirements</h1>
+  <h1 id="title">Requirements</h1>
   <span class="counts" id="counts"></span>
   <div class="tabs" role="tablist">
     <button data-view="explorer" class="on">Explorer</button>
@@ -132,7 +133,7 @@ table.flist th, table.flist td { text-align: left; border-bottom: 1px solid var(
   <input type="search" id="q" placeholder="Search ID or text…">
   <select id="ftype"><option value="">All types</option></select>
   <select id="fstatus"><option value="">All statuses</option></select>
-  <label class="chk"><input type="checkbox" id="ftbd"> Open TBD/TBR</label>
+  <label class="chk" id="ftbdl"><input type="checkbox" id="ftbd"> <span id="ftbdt">Open items</span></label>
   <label class="chk"><input type="checkbox" id="ffind"> Has findings</label>
   <select id="colorby" title="Colour by">
     <option value="section">Colour: section</option>
@@ -163,17 +164,28 @@ table.flist th, table.flist td { text-align: left; border-bottom: 1px solid var(
 </main>
 <script>
 const DATA = /*DATA*/null;
-const ID_RE = /(?<![\w-])(?:L0-(?:OBJ|CON|SUC|ASM)-\d+|L\d+-AER(?:-[A-Z0-9]+)*-\d+|N-\d{3}|SC-\d{3}|SH-\d{2}|P-[A-Z]+-\d+|DD-\d+)\b/g;
-const KIND_LABEL = { req: "Requirement", asm: "Assumption", param: "Parameter", need: "Need", scenario: "Scenario",
-  stakeholder: "Stakeholder", decision: "Design decision", missing: "Unresolved reference" };
-const EDGE_LABEL = { parent: "decomposes", derived: "derived from", uses: "uses parameter", source: "source",
-  refers: "refers to", affects: "affects", exercises: "exercises", stakeholder: "stakeholder" };
-const REVERSE_LABEL = { uses: "used by", source: "cited as source by", refers: "referred to by",
-  affects: "affected by", exercises: "exercised by", stakeholder: "needs of this stakeholder" };
+const META = DATA.meta, R = META.roles, NONE = META.none_value;
+document.title = META.title;
+document.getElementById("title").textContent = META.title;
+const ID_RE = new RegExp(META.id_pattern, "g");
+const STRIP_RE = (() => { try { return META.label_strip ? new RegExp(META.label_strip) : null; } catch (e) { return null; } })();
+const escRe = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const SPLIT_RE = META.rationale_split ? new RegExp("\\s(?=" + escRe(META.rationale_split) + ")") : null;
+const SUFF_RE = META.rationale_split ? new RegExp(escRe(META.rationale_split) + ".*$") : null;
+const CRIT_RE = META.criteria_marker ? new RegExp("(?:;\\s*)?" + escRe(META.criteria_marker) + "\\s*", "i") : null;
 const PALETTE = ["#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2", "#edc948", "#b07aa1", "#ff9da7",
   "#9c755f", "#86bcb6", "#d37295", "#8cd17d", "#a0cbe8", "#bab0ac"];
-const KIND_COLOR = { param: "#8c8c84", need: "#59a14f", scenario: "#76b7b2", stakeholder: "#9c755f",
-  decision: "#b07aa1", missing: "#e15759", asm: "#edc948" };
+const KIND_KEYS = Object.keys(META.kinds);
+const kindLabel = k => (META.kinds[k] && META.kinds[k].label) || k;
+// a kind without a configured colour takes a palette entry, counting from the end so that it
+// differs from the first colours given to requirements
+const kindColor = k => (META.kinds[k] && META.kinds[k].color) ||
+  (KIND_KEYS.includes(k) ? PALETTE[(PALETTE.length - 1 - KIND_KEYS.indexOf(k) % PALETTE.length)] : "#8c8c84");
+const edgeLabel = k => (META.edges[k] && META.edges[k].label) || k;
+const reverseLabel = k => (META.edges[k] && META.edges[k].reverse) || k;
+const lvIdx = l => META.levels.indexOf(l);
+const skey = key => META.storage_key + "." + key;
+const hashId = () => { try { return decodeURIComponent(location.hash.slice(1)); } catch (e) { return ""; } };
 
 const byId = new Map(DATA.nodes.map(n => [n.id, n]));
 const outE = new Map(), inE = new Map();
@@ -187,14 +199,16 @@ const children = id => outs(id, ["parent", "derived"]).map(e => e.to);
 const parents = id => ins(id, ["parent", "derived"]).map(e => e.from);
 const uniq = a => [...new Set(a)];
 const reqs = DATA.nodes.filter(n => n.kind === "req");
-const levels = uniq(reqs.map(n => n.level)).sort();
+const levels = META.levels;
 const findingsOf = id => DATA.findings[id] || [];
-const isTbd = n => n.fields && n.fields["TBD/TBR"] && n.fields["TBD/TBR"].trim() !== "—";
+const isNone = v => { const s = String(v ?? "").trim(); return !s || s === NONE; };
+const fieldOf = (n, role) => (role && n && n.fields && n.fields[role]) || "";
+const isTbd = n => !!R.open_items && !isNone(fieldOf(n, R.open_items));
 
 // ------------------------------------------------------------------ colour
 const colourKeys = {};
 function colourOf(n) {
-  if (n.kind !== "req") return KIND_COLOR[n.kind] || "#8c8c84";
+  if (n.kind !== "req") return kindColor(n.kind);
   const by = document.getElementById("colorby").value;
   const key = by === "section" ? n.level + "/" + n.section : (n[by] || "?");
   const keys = colourKeys[by] || (colourKeys[by] = []);
@@ -206,17 +220,22 @@ function colourOf(n) {
 })();
 
 // ------------------------------------------------------------------ text
-const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const unesc = s => s.replace(/&(amp|lt|gt|quot|#39);/g, (_, e) => ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" }[e]));
 const tidy = s => String(s ?? "").replace(/\s*\n\s*/g, " ").trim();
 function linkify(s) {
-  return esc(tidy(s)).replace(ID_RE, id => byId.has(id) ? `<a data-id="${id}" class="id">${id}</a>` : `<span class="id">${id}</span>`);
+  // IDs are found in the escaped text and stay escaped; the lookup uses the decoded form
+  return esc(tidy(s)).replace(ID_RE, id => byId.has(unesc(id)) ? `<a data-id="${id}" class="id">${id}</a>` : `<span class="id">${id}</span>`);
 }
 function paragraphs(s) {
-  return tidy(s).split(/\s(?=Sufficiency:)/).map(p => `<p>${linkify(p)}</p>`).join("");
+  const t = tidy(s);
+  return (SPLIT_RE ? t.split(SPLIT_RE) : [t]).filter(Boolean).map(p => `<p>${linkify(p)}</p>`).join("");
 }
 function short(n, len) {
-  // drop the repeated subject ("The Aeronef project shall …") so labels show what differs
-  const t = tidy(n.title || "").replace(/^The [\w\s-]{1,40}? shall /, "… ");
+  // drop the repeated subject (label_strip) so labels show what differs
+  let t = tidy(n.title || "");
+  if (STRIP_RE) t = t.replace(STRIP_RE, "");
+  t = t.charAt(0).toUpperCase() + t.slice(1);
   return t.length > len ? t.slice(0, len - 1) + "…" : t;
 }
 
@@ -236,23 +255,32 @@ function fillSelect(id, values) {
   const el = document.getElementById(id);
   for (const v of uniq(values).filter(Boolean).sort()) el.insertAdjacentHTML("beforeend", `<option>${esc(v)}</option>`);
 }
-fillSelect("ftype", reqs.map(n => n.type));
-fillSelect("fstatus", DATA.nodes.filter(n => n.kind === "req" || n.kind === "asm").map(n => n.status));
+(function applyRoles() {
+  document.getElementById("ftype").hidden = !R.type;
+  document.getElementById("fstatus").hidden = !R.status;
+  document.getElementById("ftbdl").hidden = !R.open_items;
+  document.getElementById("ftbdt").textContent = "Open " + R.open_items;
+  const cb = document.getElementById("colorby");
+  if (!R.type) cb.querySelector('option[value="type"]').remove();
+  if (!R.status) cb.querySelector('option[value="status"]').remove();
+})();
+if (R.type) fillSelect("ftype", reqs.map(n => n.type));
+if (R.status) fillSelect("fstatus", DATA.nodes.filter(n => n.kind === "req" || n.kind === "asm").map(n => n.status));
 
 // ------------------------------------------------------------------ outline
-const openGroups = new Set(["g:" + (levels[0] || "L0")]);
+const openGroups = new Set(["g:" + (levels[0] ?? "")]);
 function outline() {
   const groups = [];
-  for (const lv of uniq(DATA.sections.map(s => s.level))) {
+  for (const lv of levels.filter(l => DATA.sections.some(s => s.level === l))) {
     const subs = DATA.sections.filter(s => s.level === lv).map(s => ({
       key: "s:" + lv + "/" + s.section, label: s.section,
       items: DATA.nodes.filter(n => (n.kind === "req" || n.kind === "asm") && n.level === lv && n.section === s.section)
     }));
     groups.push({ key: "g:" + lv, label: lv, subs });
   }
-  const other = [["need", "Needs"], ["scenario", "Scenarios"], ["stakeholder", "Stakeholders"],
-    ["param", "Parameters"], ["decision", "Design decisions"], ["missing", "Unresolved references"]]
-    .map(([k, label]) => ({ key: "s:" + k, label, items: DATA.nodes.filter(n => n.kind === k) }))
+  // one sub-group per other node kind that has nodes, in meta order with "missing" last
+  const other = KIND_KEYS.filter(k => k !== "req" && k !== "asm" && k !== "missing").concat(KIND_KEYS.includes("missing") ? ["missing"] : [])
+    .map(k => ({ key: "s:" + k, label: META.kinds[k].group || kindLabel(k), items: DATA.nodes.filter(n => n.kind === k) }))
     .filter(s => s.items.length);
   if (other.length) groups.push({ key: "g:other", label: "Sources and links", subs: other });
 
@@ -264,12 +292,12 @@ function outline() {
       const items = s.items.filter(matches);
       if (filtering && !items.length) return "";
       const open = filtering || openGroups.has(s.key) || items.some(n => n.id === state.sel);
-      return `<details data-key="${s.key}" ${open ? "open" : ""}><summary>${esc(s.label)} <span class="n">${items.length}</span></summary>` +
+      return `<details data-key="${esc(s.key)}" ${open ? "open" : ""}><summary>${esc(s.label)} <span class="n">${items.length}</span></summary>` +
         (items.length ? items.map(itemHtml).join("") : `<div class="item empty">empty</div>`) + `</details>`;
     }).join("");
     if (filtering && !subsHtml) continue;
     const open = filtering || openGroups.has(g.key) || g.subs.some(s => s.items.some(n => n.id === state.sel));
-    html += `<details data-key="${g.key}" ${open ? "open" : ""}><summary>${esc(g.label)}</summary>${subsHtml}</details>`;
+    html += `<details data-key="${esc(g.key)}" ${open ? "open" : ""}><summary>${esc(g.label)}</summary>${subsHtml}</details>`;
   }
   const el = document.getElementById("outline");
   el.innerHTML = html || `<div class="item empty">No match</div>`;
@@ -283,68 +311,89 @@ function itemHtml(n) {
   const f = findingsOf(n.id);
   const flag = f.some(x => x.severity === "error") ? `<span class="flag" title="errors">●</span>` :
     f.length ? `<span class="flag w" title="warnings">●</span>` : "";
-  return `<div class="item${n.id === state.sel ? " on" : ""}" data-id="${n.id}"><span class="dot" style="background:${colourOf(n)}"></span>` +
-    `<span class="id">${n.id}</span><span class="t" title="${esc(tidy(n.title || ""))}">${esc(short(n, Infinity))}</span>${flag}</div>`;
+  return `<div class="item${n.id === state.sel ? " on" : ""}" data-id="${esc(n.id)}"><span class="dot" style="background:${colourOf(n)}"></span>` +
+    `<span class="id">${esc(n.id)}</span><span class="t" title="${esc(tidy(n.title || ""))}">${esc(short(n, Infinity))}</span>${flag}</div>`;
 }
 
 // ------------------------------------------------------------------ detail
 function detail() {
   const el = document.getElementById("detail");
   const n = byId.get(state.sel);
-  if (!n) { el.innerHTML = `<p class="empty">Select a requirement in the outline.</p>`; return; }
+  if (!n) { el.innerHTML = `<p class="empty">Select an item in the outline.</p>`; return; }
   const f = findingsOf(n.id);
   const errs = f.filter(x => x.severity === "error").length, warns = f.length - errs;
-  let h = `<h2><span class="dot" style="background:${colourOf(n)}"></span><span class="id">${n.id}</span></h2><div class="chips">` +
-    `<span class="chip">${KIND_LABEL[n.kind] || n.kind}</span>` +
+  const isRec = n.kind === "req" || n.kind === "asm";
+  let h = `<h2><span class="dot" style="background:${colourOf(n)}"></span><span class="id">${esc(n.id)}</span></h2><div class="chips">` +
+    `<span class="chip">${esc(kindLabel(n.kind))}</span>` +
     ["level", "section", "type", "status"].filter(k => n[k]).map(k => `<span class="chip">${esc(n[k])}</span>`).join("") +
-    (isTbd(n) ? `<span class="chip warn">TBD/TBR open</span>` : "") +
+    (isTbd(n) ? `<span class="chip warn">${esc(R.open_items)} open</span>` : "") +
     (errs ? `<span class="chip err">${errs} error(s)</span>` : "") + (warns ? `<span class="chip warn">${warns} warning(s)</span>` : "") +
-    (n.file ? `<span class="chip">${esc(n.file)}:${n.line}</span>` : "") + `</div>`;
+    (n.file ? `<span class="chip">${esc(n.file)}:${esc(n.line)}</span>` : "") + `</div>`;
 
-  if (n.kind === "req") {
-    h += `<div class="statement">${linkify(n.fields.Statement)}</div><dl class="fields">`;
-    const [method, rest] = splitOnce(n.fields.Verification || "", /\s+[—-]\s+/);
-    const [proc, crit] = splitOnce(rest || "", /;\s*success criteria:\s*/);
-    const rows = [["Rationale", paragraphs(n.fields.Rationale)], ["Parent(s)", linkify(n.fields["Parent(s)"])],
-      ["Source", linkify(n.fields.Source)], ["Allocated to", linkify(n.fields["Allocated to"])],
-      ["Verification", `<p><b>${esc(method)}</b>${proc ? " · " + linkify(proc) : ""}</p>${crit ? `<p>${linkify(crit)}</p>` : ""}`],
-      ["Parameters", paramList(n)], ["TBD/TBR", isTbd(n) ? `<span class="tbd">${linkify(n.fields["TBD/TBR"])}</span>` : "—"],
-      ["Criticality", esc(n.fields.Criticality)], ["Owner", esc(n.fields.Owner)], ["Version", esc(n.fields.Version)]];
-    h += rows.map(([k, v]) => `<dt>${k}</dt><dd>${v || "—"}</dd>`).join("") + `</dl>`;
-    const kids = uniq(children(n.id));
-    h += `<h3>Decomposition — ${kids.length} child requirement(s)</h3>`;
-    h += kids.length ? kids.map(cardHtml).join("") :
-      `<p class="empty">${n.fields["Allocated to"] && n.fields["Allocated to"].trim() !== "—" ?
-        "No child requirement yet: allocated to " + esc(n.fields["Allocated to"]) + "." : "Leaf requirement."}</p>`;
+  if (isRec) {
+    h += `<div class="statement">${linkify(n.title)}</div><dl class="fields">`;
+    h += detailRows(n).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v || esc(NONE)}</dd>`).join("") + `</dl>`;
   } else {
     h += n.title ? `<div class="statement">${linkify(n.title)}</div>` : "";
-    h += `<dl class="fields">` + Object.entries(n.fields || {}).filter(([k]) => k !== "ID")
-      .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${paragraphs(v) || "—"}</dd>`).join("") + `</dl>`;
-    if (n.missing) h += `<p class="empty">Referenced but not defined in the level files, ConOps, registers or parameter database.</p>`;
+    h += `<dl class="fields">` + Object.entries(n.fields || {}).filter(([k]) => k !== META.id_field)
+      .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${paragraphs(v) || esc(NONE)}</dd>`).join("") + `</dl>`;
+    if (n.missing) h += `<p class="empty">Referenced but not defined.</p>`;
+  }
+  if (n.kind === "req") {
+    const kids = uniq(children(n.id));
+    h += `<h3>Decomposition — ${kids.length} child requirement(s)</h3>`;
+    const alloc = fieldOf(n, R.allocation);
+    h += kids.length ? kids.map(cardHtml).join("") :
+      `<p class="empty">${!isNone(alloc) ? "No child requirement yet: allocated to " + esc(alloc) + "." : "Leaf requirement."}</p>`;
   }
   h += linkSection("Links from here", outs(n.id).filter(e => !["parent", "derived"].includes(e.kind)), "to");
   h += linkSection("Links to here", ins(n.id).filter(e => n.kind !== "req" || !["parent", "derived"].includes(e.kind)), "from");
   if (f.length) h += `<h3>Findings</h3><ul class="findings">` +
-    f.map(x => `<li class="${x.severity}"><b>${x.code}</b> ${esc(x.message)}</li>`).join("") + `</ul>`;
+    f.map(x => `<li class="${esc(x.severity)}"><b>${esc(x.code)}</b> ${esc(x.message)}</li>`).join("") + `</ul>`;
   el.innerHTML = h;
   el.scrollTop = 0;
 }
+// rows come from meta.detail_rows, else every field but the ID and the statement, in file order
+function detailRows(n) {
+  const titleRole = n.kind === "req" ? R.statement : R.assumption;
+  const names = META.detail_rows.length ? META.detail_rows :
+    Object.keys(n.fields).filter(k => k !== META.id_field && k !== titleRole);
+  const usesFields = META.uses_fields || [];
+  let usesShown = false;
+  const rows = names.map(k => {
+    const v = n.fields[k];
+    if (usesFields.includes(k) && k !== titleRole) { usesShown = true; return [k, paramList(n)]; }
+    if (v === undefined) return [k, ""];
+    if (k === R.rationale) return [k, paragraphs(v)];
+    if (k === R.verification && CRIT_RE) return [k, verificationHtml(v)];
+    if (k === R.open_items) return [k, isTbd(n) ? `<span class="tbd">${linkify(v)}</span>` : ""];
+    return [k, isNone(v) ? "" : linkify(v)];
+  });
+  if (!usesShown && outs(n.id, ["uses"]).length) rows.push([edgeLabel("uses").replace(/^./, c => c.toUpperCase()), paramList(n)]);
+  return rows;
+}
+function verificationHtml(v) {
+  const [method, rest] = splitOnce(v || "", /\s+[—-]\s+/);
+  const [proc, crit] = splitOnce(rest || "", CRIT_RE);
+  return `<p><b>${esc(method)}</b>${proc ? " · " + linkify(proc) : ""}</p>${crit ? `<p>${linkify(crit)}</p>` : ""}`;
+}
 function splitOnce(s, re) { const m = s.match(re); return m ? [s.slice(0, m.index), s.slice(m.index + m[0].length)] : [s, ""]; }
 function paramList(n) {
-  const ps = outs(n.id, ["uses"]).map(e => byId.get(e.to));
-  if (!ps.length) return "—";
+  const ps = outs(n.id, ["uses"]).map(e => byId.get(e.to)).filter(Boolean);
+  if (!ps.length) return "";
   return ps.map(p => {
     const others = ins(p.id, ["uses"]).length - 1;
-    const v = p.fields.Value ? ` = ${esc(p.fields.Value)} ${esc(p.fields.Unit || "")}` : "";
-    return `<a data-id="${p.id}" class="id">${p.id}</a> <span class="chip${p.missing ? " warn" : ""}">${esc(p.status || "")}${v}</span>` +
+    const val = META.value_field && p.fields[META.value_field];
+    const v = val ? ` = ${esc(val)} ${esc((META.unit_field && p.fields[META.unit_field]) || "")}` : "";
+    return `<a data-id="${esc(p.id)}" class="id">${esc(p.id)}</a> <span class="chip${p.missing ? " warn" : ""}">${esc(p.status || "")}${v}</span>` +
       (others > 0 ? ` <span class="t">shared with ${others} other</span>` : "");
   }).join("<br>");
 }
 function cardHtml(id) {
   const c = byId.get(id); if (!c) return "";
-  const suff = (tidy(c.fields && c.fields.Rationale).match(/Sufficiency:.*$/) || [""])[0];
-  return `<div class="card"><div class="h"><span class="dot" style="background:${colourOf(c)}"></span><a data-id="${id}" class="id">${id}</a>` +
-    `<span class="chip">${esc(c.level || KIND_LABEL[c.kind])}</span></div><div>${linkify(c.fields && c.fields.Statement || c.title)}</div>` +
+  const suff = SUFF_RE ? (tidy(fieldOf(c, R.rationale)).match(SUFF_RE) || [""])[0] : "";
+  return `<div class="card"><div class="h"><span class="dot" style="background:${colourOf(c)}"></span><a data-id="${esc(id)}" class="id">${esc(id)}</a>` +
+    `<span class="chip">${esc(c.level || kindLabel(c.kind))}</span></div><div>${linkify(c.title)}</div>` +
     (suff ? `<div class="suff">${linkify(suff)}</div>` : "") + `</div>`;
 }
 function linkSection(title, es, end) {
@@ -352,7 +401,7 @@ function linkSection(title, es, end) {
   const byKind = {};
   for (const e of es) (byKind[e.kind] = byKind[e.kind] || []).push(e[end]);
   return `<h3>${title}</h3><dl class="fields">` + Object.entries(byKind).map(([k, ids]) =>
-    `<dt>${EDGE_LABEL[k] || k}</dt><dd>${uniq(ids).map(id => `<a data-id="${id}" class="id" title="${esc(short(byId.get(id) || {}, 120))}">${id}</a>`).join(", ")}</dd>`).join("") + `</dl>`;
+    `<dt>${esc(end === "to" ? edgeLabel(k) : reverseLabel(k))}</dt><dd>${uniq(ids).map(id => `<a data-id="${esc(id)}" class="id" title="${esc(short(byId.get(id) || {}, 120))}">${esc(id)}</a>`).join(", ")}</dd>`).join("") + `</dl>`;
 }
 
 // ------------------------------------------------------------------ graph
@@ -380,7 +429,7 @@ function graph() {
   for (const e of xEdges) {
     const out = e.from === n.id, other = out ? e.to : e.from;
     if (inTree.has(other)) continue;
-    const label = out ? EDGE_LABEL[e.kind] || e.kind : REVERSE_LABEL[e.kind] || e.kind;
+    const label = out ? edgeLabel(e.kind) : reverseLabel(e.kind);
     (xGroups[label] = xGroups[label] || []).push(other);
   }
   for (const [label, ids] of Object.entries(xGroups)) lanes.push([label[0].toUpperCase() + label.slice(1), uniq(ids), true]);
@@ -431,8 +480,8 @@ function graph() {
 function nodeSvg(id, x, y, sel) {
   const m = byId.get(id) || { id, kind: "missing", title: "" };
   const c = colourOf(m);
-  const sub = m.kind === "req" || m.kind === "asm" ? short(m, 26) : (KIND_LABEL[m.kind] + (m.title ? " · " + short(m, 16) : ""));
-  return `<g class="node${sel ? " sel" : ""}" data-id="${id}"><title>${esc(id + " — " + tidy(m.title || ""))}</title>` +
+  const sub = m.kind === "req" || m.kind === "asm" ? short(m, 26) : (kindLabel(m.kind) + (m.title ? " · " + short(m, 16) : ""));
+  return `<g class="node${sel ? " sel" : ""}" data-id="${esc(id)}"><title>${esc(id + " — " + tidy(m.title || ""))}</title>` +
     `<rect x="${x}" y="${y}" width="${NW}" height="${NH}" rx="8" fill="${c}22" stroke="${c}"${m.missing ? ' stroke-dasharray="3 3"' : ""}/>` +
     `<rect x="${x}" y="${y}" width="5" height="${NH}" rx="2" fill="${c}" stroke="none"/>` +
     `<text class="idt" x="${x + 12}" y="${y + 17}">${esc(id)}</text>` +
@@ -442,30 +491,42 @@ function nodeSvg(id, x, y, sel) {
 // ------------------------------------------------------------------ coverage
 function coverage() {
   const el = document.getElementById("coverage");
-  const rowLv = el.querySelector("#covrow")?.value || levels[0] || "L0";
-  const colOpts = [...levels.filter(l => l > rowLv).map(l => [l, "Level " + l]), ["alloc", "Allocation (Allocated to)"]];
+  if (!levels.length) { el.innerHTML = `<p class="empty">No levels found: nothing to compare.</p>`; return; }
+  const sel = el.querySelector("#covrow")?.value;
+  const rowLv = levels.includes(sel) ? sel : levels[0];
+  // the matrix compares a level with each later level, and with the allocation field if there is one
+  const allocated = r => tidy(fieldOf(r, R.allocation)).split(/[,;]\s*/).filter(x => !isNone(x));
+  const canAlloc = !!R.allocation && reqs.some(r => allocated(r).length);
+  const colOpts = [...levels.filter(l => lvIdx(l) > lvIdx(rowLv)).map(l => [l, "Level " + l]),
+    ...(canAlloc ? [["alloc", `Allocation (${R.allocation})`]] : [])];
+  const rowSelect = `Rows <select id="covrow">${levels.map(l => `<option ${l === rowLv ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
+  if (!colOpts.length) {
+    el.innerHTML = `<div class="cov-controls">${rowSelect}</div><p class="empty">Nothing to compare ${esc(rowLv)} with: ` +
+      `there is no later level and no allocation field.</p>`;
+    bindCoverage(el); return;
+  }
   const colSel = el.querySelector("#covcol")?.value;
   const colLv = colOpts.some(o => o[0] === colSel) ? colSel : colOpts[0][0];
   const rows = reqs.filter(n => n.level === rowLv && matches(n));
   let cols, has;
   if (colLv === "alloc") {
-    cols = uniq(rows.flatMap(r => tidy(r.fields["Allocated to"]).split(/[,;]\s*/))).filter(x => x && x !== "—").sort();
-    has = (r, c) => tidy(r.fields["Allocated to"]).split(/[,;]\s*/).includes(c);
+    cols = uniq(rows.flatMap(allocated)).sort();
+    has = (r, c) => allocated(r).includes(c);
   } else {
     cols = reqs.filter(n => n.level === colLv).map(n => n.id);
     has = (r, c) => parents(c).includes(r.id);
   }
   const colHasParent = c => colLv === "alloc" || rows.some(r => has(r, c)) || parents(c).length;
-  let h = `<div class="cov-controls">Rows <select id="covrow">${levels.map(l => `<option ${l === rowLv ? "selected" : ""}>${l}</option>`).join("")}</select>` +
-    `Columns <select id="covcol">${colOpts.map(([v, t]) => `<option value="${v}" ${v === colLv ? "selected" : ""}>${t}</option>`).join("")}</select>` +
+  let h = `<div class="cov-controls">${rowSelect}` +
+    `Columns <select id="covcol">${colOpts.map(([v, t]) => `<option value="${esc(v)}" ${v === colLv ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>` +
     `<span>${rows.length} rows × ${cols.length} columns. Red rows have no child requirement; red columns have no parent.</span></div>`;
-  if (!rows.length) { el.innerHTML = h + `<p class="empty">No requirements at ${rowLv} match the filters.</p>`; bindCoverage(el); return; }
-  h += `<table class="matrix"><thead><tr><th>${rowLv}</th><th>Children</th>` +
-    cols.map(c => `<th class="v${colHasParent(c) ? "" : " gap"}">${colLv === "alloc" ? esc(c) : `<a data-id="${c}">${c}</a>`}</th>`).join("") +
+  if (!rows.length) { el.innerHTML = h + `<p class="empty">No ${esc(META.kinds.req.group.toLowerCase())} at ${esc(rowLv)} match the filters.</p>`; bindCoverage(el); return; }
+  h += `<table class="matrix"><thead><tr><th>${esc(rowLv)}</th><th>Children</th>` +
+    cols.map(c => `<th class="v${colHasParent(c) ? "" : " gap"}">${colLv === "alloc" ? esc(c) : `<a data-id="${esc(c)}">${esc(c)}</a>`}</th>`).join("") +
     `<th>Statement</th></tr></thead><tbody>`;
   for (const r of rows) {
     const kids = children(r.id).length;
-    h += `<tr class="${kids ? "" : "gap"}"><th><a data-id="${r.id}" class="id">${r.id}</a></th><td class="n">${kids}</td>` +
+    h += `<tr class="${kids ? "" : "gap"}"><th><a data-id="${esc(r.id)}" class="id">${esc(r.id)}</a></th><td class="n">${kids}</td>` +
       cols.map(c => `<td class="m">${has(r, c) ? "●" : ""}</td>`).join("") + `<td class="stmt" title="${esc(tidy(r.title))}">${esc(short(r, 110))}</td></tr>`;
   }
   el.innerHTML = h + `</tbody></table>`;
@@ -480,12 +541,12 @@ function findingsView() {
     .filter(f => !f.id || !byId.has(f.id) || matches(byId.get(f.id)));
   const counts = {};
   for (const f of all) counts[f.code] = (counts[f.code] || 0) + 1;
-  let h = `<div class="cov-controls">${all.length} finding(s) from lint, trace check and parameter check: ` +
-    Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<span class="chip">${k} ${v}</span>`).join(" ") + `</div>`;
+  let h = `<div class="cov-controls">${all.length} finding(s)${all.length ? ": " : ""}` +
+    Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<span class="chip">${esc(k)} ${v}</span>`).join(" ") + `</div>`;
   if (DATA.problems.length) h += `<p class="flag">${DATA.problems.length} parse problem(s): ${DATA.problems.map(esc).join("; ")}</p>`;
   h += `<table class="flist"><thead><tr><th>Item</th><th>Severity</th><th>Code</th><th>Message</th></tr></thead><tbody>` +
-    all.map(f => `<tr><td>${f.id && byId.has(f.id) ? `<a data-id="${f.id}" class="id">${f.id}</a>` : esc(f.id || "—")}</td>` +
-      `<td class="findings"><span class="${f.severity}">${f.severity}</span></td><td>${f.code}</td><td>${esc(f.message)}</td></tr>`).join("") +
+    all.map(f => `<tr><td>${f.id && byId.has(f.id) ? `<a data-id="${esc(f.id)}" class="id">${esc(f.id)}</a>` : esc(f.id || NONE)}</td>` +
+      `<td class="findings"><span class="${esc(f.severity)}">${esc(f.severity)}</span></td><td>${esc(f.code)}</td><td>${esc(f.message)}</td></tr>`).join("") +
     `</tbody></table>`;
   el.innerHTML = h;
 }
@@ -495,7 +556,7 @@ function counts() {
   const k = kind => DATA.nodes.filter(n => n.kind === kind).length;
   const f = Object.values(DATA.findings).flat();
   document.getElementById("counts").textContent =
-    `${k("req")} requirements · ${k("asm")} assumptions · ${DATA.edges.filter(e => e.kind === "parent").length} decomposition links · ` +
+    `${k("req")} ${META.kinds.req.group.toLowerCase()} · ${k("asm")} ${META.kinds.asm.group.toLowerCase()} · ${DATA.edges.filter(e => e.kind === "parent").length} decomposition links · ` +
     `${f.filter(x => x.severity === "error").length} errors, ${f.filter(x => x.severity === "warning").length} warnings`;
 }
 function render() {
@@ -505,7 +566,7 @@ function render() {
 }
 function select(id) {
   if (!byId.has(id)) return;
-  if (location.hash.slice(1) !== id) location.hash = id; else { state.sel = id; showView("explorer"); }
+  if (hashId() !== id) location.hash = encodeURIComponent(id); else { state.sel = id; showView("explorer"); }
 }
 function showView(v) {
   state.view = v;
@@ -524,7 +585,7 @@ document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click
   document.getElementById(id).addEventListener(id === "q" ? "input" : "change", render));
 ["depth2", "showx"].forEach(id => document.getElementById(id).addEventListener("change", graph));
 window.addEventListener("hashchange", () => {
-  const id = decodeURIComponent(location.hash.slice(1));
+  const id = hashId();
   if (byId.has(id)) { state.sel = id; expanded.clear(); showView("explorer"); }
 });
 // Resizable panes: --w1 is the outline width, --w3 the graph width; the detail pane takes the rest.
@@ -535,9 +596,9 @@ function setWidth(key, px) {
   const other = document.getElementById(key === "w1" ? "graphpane" : "outline").offsetWidth;
   px = Math.round(Math.max(MIN[key], Math.min(px, total - other - MIN.mid)));
   explorer.style.setProperty("--" + key, px + "px");
-  try { localStorage.setItem("viewer." + key, px); } catch (e) {}
+  try { localStorage.setItem(skey(key), px); } catch (e) {}
 }
-try { ["w1", "w3"].forEach(k => { const v = localStorage.getItem("viewer." + k); if (v) explorer.style.setProperty("--" + k, v + "px"); }); } catch (e) {}
+try { ["w1", "w3"].forEach(k => { const v = localStorage.getItem(skey(k)); if (v) explorer.style.setProperty("--" + k, v + "px"); }); } catch (e) {}
 document.querySelectorAll(".splitter").forEach(sp => {
   const key = sp.dataset.pane;
   const pane = document.getElementById(key === "w1" ? "outline" : "graphpane");
@@ -562,13 +623,13 @@ document.querySelectorAll(".splitter").forEach(sp => {
   });
   sp.addEventListener("dblclick", () => {
     explorer.style.removeProperty("--" + key);
-    try { localStorage.removeItem("viewer." + key); } catch (e) {}
+    try { localStorage.removeItem(skey(key)); } catch (e) {}
     graph();
   });
 });
 let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => state.view === "explorer" && graph(), 120); });
 counts();
-const start = decodeURIComponent(location.hash.slice(1));
+const start = hashId();
 state.sel = byId.has(start) ? start : (reqs[0] || DATA.nodes[0] || {}).id;
 showView(new URLSearchParams(location.search).get("view") || "explorer");
 </script>

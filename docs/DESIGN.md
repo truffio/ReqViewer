@@ -215,6 +215,8 @@ class Loader(Protocol):
     "id_pattern": "...",
     "levels": ["L0", "L1"],
     "roles": {"statement": "...", "parents": "...", "...": "..."},
+    "id_field": "ID",
+    "uses_fields": [],
     "none_value": "—",
     "detail_rows": [],
     "label_strip": "...",
