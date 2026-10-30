@@ -83,7 +83,10 @@ class SampleContractTest(unittest.TestCase):
                          [("L0", "PURPOSE"), ("L0", "SAFETY"), ("L1", "BREWING"), ("L1", "HEATING"),
                           ("L1", "INTERFACE"), ("L2", "HEATER"), ("L2", "GRINDER"), ("L2", "General")])
 
-    def test_clean_sample_has_no_findings(self):
+    def test_sample_only_finding_is_its_deliberate_dangling_parameter(self):
+        f, = self.data["findings"].pop("L1-HTR-002")
+        self.assertEqual((f["code"], f["severity"]), ("DANGLING_REF", "warning"))
+        self.assertIn("PRM-099", f["message"])
         self.assertEqual((self.data["findings"], self.data["problems"]), ({}, []))
 
     def test_merge_added_fields_to_headings(self):

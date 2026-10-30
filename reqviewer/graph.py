@@ -23,7 +23,7 @@ def slug(text):
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "viewer"
 
 
-def build(root, config):
+def build(root, config, extra_findings=()):
     """Return the viewer data: see docs/DESIGN.md section 6."""
     root = Path(root)
     roles, lk = config.fields, config.links
@@ -48,6 +48,7 @@ def build(root, config):
     for r in result.records:
         rid = r.get(config.format.id_field)
         if rid in nodes:
+            result.duplicates.append((nodes[rid], rel(root, r.file), r.line))   # first node kept; the check reports it
             continue
         req = r.kind == "req"
         node = {"id": rid, "kind": r.kind, "title": r.get(roles.statement if req else roles.assumption),
@@ -120,7 +121,7 @@ def build(root, config):
 
     data = {"meta": meta(config, levels), "nodes": list(nodes.values()), "edges": edges,
             "findings": {}, "sections": sections, "problems": [str(p) for p in result.problems]}
-    for f in checks.run(result, data):
+    for f in [*checks.run(result, data), *extra_findings]:
         data["findings"].setdefault(f["item"], []).append(
             {"severity": f["severity"], "code": f["code"], "message": f["message"]})
     return data

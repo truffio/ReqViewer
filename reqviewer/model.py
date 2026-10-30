@@ -46,6 +46,7 @@ class LoadResult:
     sections: list = field(default_factory=list)   # (level, section), in file order
     levels: list = field(default_factory=list)     # levels in order
     problems: list = field(default_factory=list)   # Findings
+    duplicates: list = field(default_factory=list)  # (kept node, file, line) of later records reusing an ID
 
 
 class Loader(Protocol):

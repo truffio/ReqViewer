@@ -80,10 +80,23 @@ class CliTest(ProjectCase):
         code, _, err = run("--root", root / "nope")
         self.assert_error(code, err, "nope")
 
-    def test_findings_option_is_not_implemented(self):
-        root = self.project({"f.json": "[]"})
-        code, _, err = run("--root", root, "--findings", root / "f.json")
-        self.assert_error(code, err, "not implemented")
+    def test_findings_option_merges_external_findings(self):
+        good = '[{"item": "", "severity": "warning", "code": "X", "message": "m"}]'
+        root = self.project({"f.json": good})
+        code, _, err = run("--root", root, "--findings", root / "f.json", "--out", root / "p.html")
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn('"code": "X"', (root / "p.html").read_text(encoding="utf-8"))
+
+    def test_findings_option_bad_file(self):
+        item = '{"item": "", "severity": "%s", "code": "X", "message": "m"}'
+        cases = {"nope": "nope.json", "{": "cannot read", '{"a": 1}': "JSON list", "[1]": "entry 1",
+                 "[{}]": "'item'", "[" + item % "info" + "]": "severity"}
+        for text, word in cases.items():
+            with self.subTest(text):
+                root = self.project({} if text == "nope" else {"f.json": text})
+                name = "nope.json" if text == "nope" else "f.json"
+                code, _, err = run("--root", root, "--findings", root / name)
+                self.assert_error(code, err, word)
 
     def test_unwritable_output(self):
         root = self.project({"blocker": ""})
