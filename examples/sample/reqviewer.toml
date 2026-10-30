@@ -1,0 +1,89 @@
+title = "BrewBox requirements"
+out = "build/brewbox_viewer.html"
+
+[format]
+req_fields = ["ID", "Level", "Type", "Statement", "Rationale", "Parent(s)", "Source", "Allocated to",
+              "Verification", "Parameters", "TBD/TBR", "Status"]
+asm_fields = ["ID", "Assumption", "Rationale", "Affects", "Status"]
+heading_must_match_id = true
+
+[ids]
+patterns = ['L\d-[A-Z]+-\d+', 'SH-\d+', 'N-\d+', 'SC-\d+', 'PRM-\d+', 'DD-\d+']
+
+[links]
+derived_pattern = 'Derived\s*\(\s*(DD-\d+)\s*\)'
+uses_pattern = 'PRM-\d+'
+uses_fields = ["Statement", "Parameters"]
+
+[display]
+label_strip = '^The [\w\s-]{1,40}? shall '
+rationale_split = "Sufficiency:"
+criteria_marker = "success criteria:"
+
+[display.kinds.param]
+color = "#8c8c84"
+
+[[sources]]
+type = "table"
+kind = "stakeholder"
+label = "Stakeholders"
+singular = "Stakeholder"
+file = "docs/needs.md"
+id = 'SH-\d+'
+title = 1
+columns = { Description = 2 }
+
+[[sources]]
+type = "table"
+kind = "need"
+label = "Needs"
+singular = "Need"
+file = "docs/needs.md"
+id = 'N-\d+'
+title = 2
+title_max = 60
+title_strip = '"“”'
+min_columns = 4
+require = { 1 = '^SH-\d+$' }
+columns = { Stakeholder = 1, Need = 2, "Meaning for the machine" = 3 }
+links = [{ kind = "stakeholder", column = 1, label = "stakeholder", reverse_label = "needs of this stakeholder" }]
+
+[[sources]]
+type = "table"
+kind = "decision"
+label = "Design decisions"
+singular = "Design decision"
+file = "docs/decisions.md"
+id = 'DD-\d+'
+title = 1
+title_max = 60
+columns = { Decision = 1, Rationale = 2 }
+
+[[sources]]
+type = "heading"
+kind = "scenario"
+label = "Scenarios"
+singular = "Scenario"
+file = "docs/scenarios.md"
+pattern = '^#### (SC-\d+) — (.+)$'
+
+[[sources]]
+type = "table"
+kind = "scenario"
+merge = true
+file = "docs/scenarios.md"
+id = 'SC-\d+'
+min_columns = 3
+columns = { "Needs exercised" = 1, Modes = 2 }
+links = [{ kind = "exercises", column = 1, pattern = 'N-\d+', label = "exercises", reverse_label = "exercised by" }]
+
+[[sources]]
+type = "yaml"
+kind = "param"
+label = "Parameters"
+singular = "Parameter"
+file = "parameters.yaml"
+list_key = "parameters"
+id_key = "id"
+title_key = "name"
+status_key = "status"

@@ -1,0 +1,21 @@
+parameters:
+  - id: PRM-001
+    name: Brew water temperature
+    value: 93
+    unit: degC
+    status: baselined
+  - id: PRM-002
+    name: Time to deliver one espresso
+    value: 35
+    unit: s
+    status: baselined
+  - id: PRM-003
+    name: Dose of beans per cup
+    value: 9
+    unit: g
+    status: proposed
+  - id: PRM-004
+    name: Heater power
+    value: 1500
+    unit: W
+    status: baselined
