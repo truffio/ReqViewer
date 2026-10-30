@@ -4,12 +4,13 @@ import unittest
 from pathlib import Path
 
 from reqviewer import config, graph
-from support import SAMPLE, ProjectCase, req
+from support import SAMPLE, needs_yaml, ProjectCase, req
 
 REFS = '[ids]\npatterns = ["[A-Z]+-\\\\d+"]\n'
 P = "Parent(s)"
 
 
+@needs_yaml
 class SampleContractTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -222,6 +223,7 @@ class GraphRulesTest(ProjectCase):
         self.assertIn("requirements/L0.md:1", f["message"])
         self.assertEqual(set(f), {"severity", "code", "message"})
 
+    @needs_yaml
     def test_source_problems_are_reported(self):
         toml = '[[sources]]\ntype="yaml"\nkind="p"\nfile="p.yaml"\nlist_key="items"'
         data = self.build({"p.yaml": "items: [1]\n"}, toml)
