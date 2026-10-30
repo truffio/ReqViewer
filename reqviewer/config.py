@@ -180,6 +180,8 @@ def _not_empty(rx, name):
 def _glob(pattern, name):
     if not pattern or PurePosixPath(pattern).is_absolute() or PureWindowsPath(pattern).anchor:
         raise ConfigError(f"{name}: must be a relative glob")
+    if any("**" in part and part != "**" for part in pattern.split("/")):
+        raise ConfigError(f"{name}: bad glob: '**' must be a whole path segment")
     try:
         list(Path("no-such-dir").glob(pattern))      # raises on a pattern that cannot work
     except (ValueError, NotImplementedError) as exc:
