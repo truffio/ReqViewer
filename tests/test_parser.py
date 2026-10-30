@@ -3,6 +3,7 @@ from pathlib import Path
 import unittest
 
 from reqviewer import config
+from reqviewer.model import natural_key
 from reqviewer.parser import MarkdownLoader
 from support import ProjectCase, block, req
 
@@ -92,6 +93,29 @@ class ParserTest(ProjectCase):
         res = MarkdownLoader().load(root, config.Config())
         self.assertEqual(len(res.problems), 1)
         self.assertIn("cannot read", res.problems[0].message)
+
+    def test_utf8_bom_is_not_part_of_the_first_line(self):
+        for first in (req("A-1"), "<!-- BEGIN SECTION S -->\n" + req("A-1") + "<!-- END SECTION S -->\n"):
+            res = self.load({"requirements/L0.md": "﻿" + first})
+            self.assertEqual(res.problems, [])
+            self.assertEqual([r.get("ID") for r in res.records], ["A-1"])
+        self.assertEqual(res.sections, [("L0", "S")])
+
+    def test_unicode_digits_that_int_rejects_are_not_numbers(self):
+        res = self.load({"requirements/².md": req("A-1"), "requirements/L1.md": req("A-2")},
+                        '[files]\nlevels = ["requirements/*.md"]')
+        self.assertEqual(sorted(res.levels), ["L1", "²"])
+        self.assertEqual(natural_key("①-٣"), ["①-", 3, ""])
+
+    def test_only_newlines_end_a_line(self):
+        res = self.load({"requirements/L0.md": req("A-1", Statement="before after\x85end")})
+        self.assertEqual(res.problems, [])
+        self.assertEqual(res.records[0].get("Statement"), "before after\x85end")
+
+    def test_cr_and_crlf_line_ends(self):
+        text = req("A-1").replace("\n", "\r\n") + req("A-2").replace("\n", "\r")
+        res = self.load({"requirements/L0.md": text})
+        self.assertEqual((res.problems, [r.get("ID") for r in res.records]), ([], ["A-1", "A-2"]))
 
     def test_no_files(self):
         res = self.load({})

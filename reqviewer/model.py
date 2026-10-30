@@ -8,9 +8,14 @@ if TYPE_CHECKING:
     from reqviewer.config import Config
 
 
+def split_lines(text):
+    """Split on LF, CRLF and CR only, unlike str.splitlines."""
+    return re.split(r"\r\n|\r|\n", text)
+
+
 def natural_key(text):
     """Sort key so that 'L2' comes before 'L10'."""
-    return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", text)]
+    return [int(t) if t.isdecimal() else t for t in re.split(r"(\d+)", text)]
 
 
 @dataclass(order=True)

@@ -139,6 +139,10 @@ class ConfigTest(ProjectCase):
         with self.assertRaises(ConfigError):
             config.load_config(root, root / "missing.toml")
 
+    def test_utf8_bom_is_ignored(self):
+        root = self.project({"reqviewer.toml": '﻿title = "A"'})
+        self.assertEqual(config.load_config(root).title, "A")
+
     def test_no_config_file_gives_defaults(self):
         self.assertEqual(config.load_config(self.project({})), config.Config())
 

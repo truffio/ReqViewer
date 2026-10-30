@@ -53,6 +53,9 @@ class ExternalFindingsTest(ProjectCase):
     def test_empty_list(self):
         self.assertEqual(self.load("[]"), [])
 
+    def test_utf8_bom_is_ignored(self):
+        self.assertEqual(self.load("﻿[]"), [])
+
     def test_bad_files(self):
         good = {"item": "", "severity": "error", "code": "C", "message": "m"}
         bad = ["{", '{"a": 1}', "[1]", json.dumps([{**good, "severity": "info"}]),

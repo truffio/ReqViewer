@@ -38,7 +38,7 @@ def run(load_result, data):
 def load_external(path):
     """Findings from a JSON file; any defect raises ConfigError."""
     try:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as exc:
         raise ConfigError(f"cannot read findings file {path}: {exc}")
     if not isinstance(data, list):

@@ -66,6 +66,24 @@ class SourcesTest(ProjectCase):
         items, _ = self.load({"s.md": text}, toml)
         self.assertEqual([(i["id"], i["title"]) for i in items], [("SC-1", "First one"), ("SC-3", "Third")])
 
+    def test_utf8_bom_is_ignored(self):
+        items, _ = self.load({"needs.md": "﻿" + NEEDS}, TABLE)
+        self.assertEqual([i["id"] for i in items], ["N-1", "N-2", "N-1"])
+        toml = '[[sources]]\ntype="heading"\nkind="sc"\nfile="s.md"\npattern=\'^#### (SC-\\d+)\''
+        items, _ = self.load({"s.md": "﻿#### SC-1\n"}, toml)
+        self.assertEqual([i["id"] for i in items], ["SC-1"])
+
+    def test_only_newlines_end_a_row(self):
+        text = "| N-1 | SH-1 | a b\x85c | m |\n"
+        items, _ = self.load({"needs.md": text}, TABLE.replace("title_max = 12", "title_max = 0"))
+        self.assertEqual(items[0]["title"], "a b\x85c")
+
+    @needs_yaml
+    def test_yaml_utf8_bom_is_ignored(self):
+        toml = '[[sources]]\ntype="yaml"\nkind="thing"\nfile="t.yaml"'
+        items, problems = self.load({"t.yaml": "﻿- {id: A}\n"}, toml)
+        self.assertEqual(([i["id"] for i in items], problems), (["A"], []))
+
     def test_missing_file_is_skipped(self):
         toml = TABLE + TABLE.replace('file = "needs.md"', 'file = "nope.md"')
         items, problems = self.load({"needs.md": NEEDS}, toml)

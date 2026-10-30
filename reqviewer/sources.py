@@ -2,7 +2,7 @@
 import re
 from pathlib import Path
 
-from reqviewer.model import Finding
+from reqviewer.model import Finding, split_lines
 from reqviewer.parser import rel
 
 
@@ -22,7 +22,7 @@ def load_sources(root, config):
             if src.type == "yaml":
                 items += _yaml(path, src, problem)
             else:
-                text = path.read_text(encoding="utf-8")
+                text = path.read_text(encoding="utf-8-sig")
                 items += (_table if src.type == "table" else _heading)(text, src)
         except (OSError, UnicodeDecodeError) as exc:
             problem(f"cannot read: {exc}")
@@ -39,7 +39,7 @@ def _cell(cells, i):
 
 def _table(text, src):
     items = []
-    for line in text.splitlines():
+    for line in split_lines(text):
         if not line.startswith("|"):
             continue
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
@@ -61,7 +61,7 @@ def _table(text, src):
 
 def _heading(text, src):
     items = []
-    for line in text.splitlines():
+    for line in split_lines(text):
         m = re.search(src.pattern, line)
         if m:
             items.append({"id": m.group(1), "kind": src.kind, "merge": False,
@@ -77,7 +77,7 @@ def _yaml(path, src, problem):
         problem("PyYAML is not installed; yaml source skipped")
         return []
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data = yaml.safe_load(path.read_text(encoding="utf-8-sig"))
     except yaml.YAMLError as exc:
         problem(f"cannot read: {exc}")
         return []

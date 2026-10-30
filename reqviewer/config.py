@@ -279,6 +279,6 @@ def load_config(root, explicit=None):
             raise ConfigError(f"config file not found: {path}")
         return Config()
     try:
-        return parse(tomllib.loads(path.read_text(encoding="utf-8")))
+        return parse(tomllib.loads(path.read_text(encoding="utf-8-sig")))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, ConfigError) as exc:
         raise ConfigError(f"{path}: {exc}") from None

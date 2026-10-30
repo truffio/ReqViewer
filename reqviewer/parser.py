@@ -2,7 +2,7 @@
 import re
 from pathlib import Path
 
-from reqviewer.model import Finding, LoadResult, Record, natural_key
+from reqviewer.model import Finding, LoadResult, Record, natural_key, split_lines
 
 BEGIN_RE = re.compile(r"^<!--\s*BEGIN SECTION ([A-Za-z0-9_-]+)\s*-->\s*$")
 END_RE = re.compile(r"^<!--\s*END SECTION ([A-Za-z0-9_-]+)\s*-->\s*$")
@@ -36,7 +36,7 @@ class MarkdownLoader:
             if level not in res.levels:
                 res.levels.append(level)
             try:
-                text = path.read_text(encoding="utf-8")
+                text = path.read_text(encoding="utf-8-sig")
             except (OSError, UnicodeDecodeError) as exc:
                 res.problems.append(Finding(rel(root, path), 0, "error", "FORMAT", "", f"cannot read: {exc}"))
                 continue
@@ -45,7 +45,7 @@ class MarkdownLoader:
 
     def _parse(self, text, path, name, level, config, fence_re, res):
         fmt = config.format
-        lines = text.splitlines()
+        lines = split_lines(text)
         section, open_at, seen = fmt.default_section, 0, set()
         heading, heading_line = "", 0
 
