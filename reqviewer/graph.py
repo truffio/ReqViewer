@@ -48,7 +48,7 @@ def build(root, config, extra_findings=()):
         result.problems.append(Finding(rel(root, r.file), r.line, "error", "FORMAT", r.get(config.format.id_field),
                                        f"{what} matched without giving an ID"))
 
-    kept = []
+    kept, own_findings = [], []
     for r in result.records:
         rid = r.get(config.format.id_field)
         if rid in nodes:
@@ -68,7 +68,10 @@ def build(root, config, extra_findings=()):
         links, merge, at = item.pop("links"), item.pop("merge"), item.pop("at")
         if merge and item["id"] in nodes:
             nodes[item["id"]]["fields"].update(item["fields"])
-        elif merge or item["id"] in nodes:
+        elif merge:
+            continue
+        elif item["id"] in nodes:
+            result.duplicates.append((nodes[item["id"]], *at))      # the first node is kept, with the links
             continue
         else:
             nodes[item["id"]] = item
@@ -89,6 +92,9 @@ def build(root, config, extra_findings=()):
         parents = [] if parents_text.strip() == lk.none_value else ids(parents_text)
         for p in parents:
             add_edge(p, rid, "parent")
+        if rid in parents or rid == derived:
+            own_findings.append({"item": rid, "severity": "warning", "code": "SELF_PARENT",
+                                 "message": f"{node['file']}:{node['line']}: {rid} is its own parent"})
         if node["kind"] == "asm":
             for f in lk.affects_fields:
                 for ref in sorted(set(ids(r.get(f)))):
@@ -115,7 +121,7 @@ def build(root, config, extra_findings=()):
                 add_edge(rid, ref, "refers")
 
     yaml_kind = next((s.kind for s in config.sources if s.type == "yaml"), "missing")
-    for e in edges:
+    for e in sorted(edges, key=lambda e: e["kind"] != "uses"):     # "uses" first: it sets the kind of a placeholder
         for end in (e["from"], e["to"]):
             if end not in nodes:
                 uses = e["kind"] == "uses" and end == e["to"]
@@ -133,7 +139,7 @@ def build(root, config, extra_findings=()):
 
     data = {"meta": meta(config, levels), "nodes": list(nodes.values()), "edges": edges,
             "findings": {}, "sections": sections, "problems": [str(p) for p in result.problems]}
-    for f in [*checks.run(result, data), *extra_findings]:
+    for f in [*checks.run(result, data), *own_findings, *extra_findings]:
         data["findings"].setdefault(f["item"], []).append(
             {"severity": f["severity"], "code": f["code"], "message": f["message"]})
     return data

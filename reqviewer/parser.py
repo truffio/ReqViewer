@@ -6,6 +6,7 @@ from reqviewer.model import Finding, LoadResult, Record, natural_key, split_line
 
 BEGIN_RE = re.compile(r"^<!--\s*BEGIN SECTION ([A-Za-z0-9_-]+)\s*-->\s*$")
 END_RE = re.compile(r"^<!--\s*END SECTION ([A-Za-z0-9_-]+)\s*-->\s*$")
+NEAR_MARKER_RE = re.compile(r"^\s*<!--\s*(?:BEGIN|END)\s+SECTION\b", re.IGNORECASE)
 FIELD_RE = re.compile(r"^([A-Za-z][\w()/ ]*?):\s*(.*)$")
 
 
@@ -27,10 +28,15 @@ class MarkdownLoader:
         fmt = config.format
         level_re = re.compile(config.files.level_pattern)
         fence_re = re.compile(r"^```(%s|%s)\s*$" % (re.escape(fmt.req_fence), re.escape(fmt.asm_fence)))
-        paths = {p for g in config.files.levels for p in root.glob(g) if p.is_file()}
+        res = LoadResult()
+        paths = set()
+        for g in config.files.levels:
+            found = {p for p in root.glob(g) if p.is_file()}
+            if not found:
+                res.problems.append(Finding("files.levels", 0, "warning", "FORMAT", "", f"no file matches {g!r}"))
+            paths |= found
         files = sorted(((natural_key(file_level(p, level_re)), natural_key(rel(root, p)), p) for p in paths),
                        key=lambda t: t[:2])
-        res = LoadResult()
         for _, _, path in files:
             level = file_level(path, level_re)
             if level not in res.levels:
@@ -48,6 +54,8 @@ class MarkdownLoader:
         lines = split_lines(text)
         section, open_at, seen = fmt.default_section, 0, set()
         heading, heading_line = "", 0
+        near_fence_re = re.compile(r"^\s*(?:`{3,}|~{3,})\s*(?:%s|%s)\b" % (re.escape(fmt.req_fence),
+                                                                           re.escape(fmt.asm_fence)), re.IGNORECASE)
 
         def problem(line, msg):
             res.problems.append(Finding(name, line, "error", "FORMAT", "", msg))
@@ -59,6 +67,8 @@ class MarkdownLoader:
         i = 0
         while i < len(lines):
             line = lines[i]
+            if line.strip() and not (line.startswith("### ") or fence_re.match(line)):
+                heading, heading_line = "", 0           # a heading counts only just before its block
             b, e = BEGIN_RE.match(line), END_RE.match(line)
             if b:
                 if open_at:
@@ -73,6 +83,8 @@ class MarkdownLoader:
                     problem(i + 1, f"END SECTION {e.group(1)} without matching BEGIN")
                 else:
                     section, open_at = fmt.default_section, 0
+            elif NEAR_MARKER_RE.match(line):
+                problem(i + 1, f"not a section marker: {line.strip()[:40]!r}")
             elif line.startswith("### "):
                 heading, heading_line = line[4:].strip(), i + 1
             elif fence_re.match(line):
@@ -96,6 +108,8 @@ class MarkdownLoader:
                     res.records.append(rec)
                     add_section(section)
                 heading, heading_line = "", 0
+            elif near_fence_re.match(line):
+                problem(i + 1, f"not a record fence: {line.strip()[:40]!r}")
             i += 1
         if open_at:
             problem(open_at, f"section {section} has no END marker")

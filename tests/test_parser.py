@@ -129,7 +129,39 @@ class ParserTest(ProjectCase):
 
     def test_no_files(self):
         res = self.load({})
-        self.assertEqual((res.records, res.sections, res.levels, res.problems), ([], [], [], []))
+        self.assertEqual((res.records, res.sections, res.levels), ([], [], []))
+        p, = res.problems                                  # a glob that matches nothing is reported
+        self.assertEqual((p.severity, p.code, p.file), ("warning", "FORMAT", "files.levels"))
+        self.assertIn("requirements/L*.md", p.message)
+
+    def test_only_the_globs_that_match_nothing_are_reported(self):
+        res = self.load({"requirements/L0.md": req("A-1")}, '[files]\nlevels = ["requirements/L*.md", "nope/*.md"]')
+        self.assertEqual([p.message for p in res.problems], ["no file matches 'nope/*.md'"])
+        self.assertEqual(len(res.records), 1)
+
+    def test_near_misses_of_fences_and_markers_are_problems(self):
+        for text in (" ```req\nID: A-1\n```\n", "```req title\nID: A-1\n```\n", "```REQ\nID: A-1\n```\n",
+                     "~~~req\nID: A-1\n~~~\n", "```` asm\nID: A-1\n````\n",
+                     "<!-- BEGIN SECTION MY SECTION -->\n", "<!-- begin section X -->\n",
+                     "  <!-- END SECTION X -->\n", "<!-- BEGIN SECTION X --> note\n"):
+            with self.subTest(text):
+                res = self.load({"requirements/L0.md": text})
+                self.assertEqual(len(res.problems), 1)
+                self.assertEqual((res.problems[0].line, res.problems[0].code), (1, "FORMAT"))
+                self.assertIn("not a", res.problems[0].message)
+                self.assertEqual(res.records, [])
+
+    def test_other_fences_are_not_near_misses(self):
+        text = "```requirements\nx\n```\n```text\nID: A-1\n```\n"
+        self.assertEqual(self.load({"requirements/L0.md": text}).problems, [])
+
+    def test_heading_counts_only_just_before_its_block(self):
+        text = ("### A-9\nSome prose.\n" + req("A-1") + "### A-2\n\n" + req("A-2") +
+                "### A-9\n## Next\n" + req("A-3") + "### A-9\n<!-- BEGIN SECTION S -->\n" + req("A-4") +
+                "<!-- END SECTION S -->\n### A-8\n" + req("A-5"))
+        res = self.load({"requirements/L0.md": text}, "[format]\nheading_must_match_id = true")
+        self.assertEqual([p.message for p in res.problems],
+                         ["heading 'A-8' does not match ID 'A-5'"])
 
     def test_parser_does_not_import_yaml(self):
         import reqviewer.parser as parser

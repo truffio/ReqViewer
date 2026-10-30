@@ -138,6 +138,36 @@ class GraphRulesTest(ProjectCase):
         data = self.build({"requirements/L0.md": req("A-1"), "n.md": "| A-1 | table title |\n"}, toml)
         self.assertEqual(self.node(data, "A-1")["kind"], "req")
         self.assertEqual(len(data["nodes"]), 1)
+        f, = data["findings"]["A-1"]
+        self.assertEqual((f["code"], f["severity"]), ("DUPLICATE_ID", "error"))
+        self.assertEqual(f["message"], "n.md:1: ID A-1 is already defined at requirements/L0.md:1")
+
+    def test_duplicate_between_two_source_rows_is_reported_and_keeps_the_first(self):
+        toml = ('[[sources]]\ntype="table"\nkind="need"\nfile="n.md"\nid="A-\\\\d"\ntitle=1\n'
+                'links=[{ kind = "k", column = 2 }]')
+        data = self.build({"n.md": "| A-1 | one | X-1 |\n| A-1 | two | X-2 |\n"}, toml)
+        self.assertEqual(self.node(data, "A-1")["title"], "one")
+        self.assertEqual(self.edges(data, "k"), {("A-1", "X-1")})
+        f, = [f for f in data["findings"]["A-1"] if f["code"] == "DUPLICATE_ID"]
+        self.assertEqual(f["message"], "n.md:2: ID A-1 is already defined")
+
+    def test_own_parent_is_a_finding_and_not_an_edge(self):
+        toml = '[links]\nderived_pattern = "Derived \\\\((A-\\\\d)\\\\)"'
+        data = self.build({"requirements/L0.md": req("A-1", **{P: "A-1 B-1"}) + req("A-2", **{P: "Derived (A-2)"})},
+                          toml)
+        self.assertEqual((self.edges(data, "parent"), self.edges(data, "derived")), ({("B-1", "A-1")}, set()))
+        for rid in ("A-1", "A-2"):
+            f, = [f for f in data["findings"][rid] if f["code"] == "SELF_PARENT"]
+            self.assertEqual(f["severity"], "warning")
+            self.assertIn("requirements/L0.md", f["message"])
+
+    def test_uses_placeholder_kind_does_not_depend_on_edge_order(self):
+        toml = ('[links]\nuses_pattern = "PRM-\\\\d"\nuses_fields = ["Parameters"]\n'
+                '[[sources]]\ntype="yaml"\nkind="param"\nfile="p.yaml"\n'
+                '[[sources]]\ntype="table"\nkind="need"\nfile="n.md"\nid="N-\\\\d"\nlinks=[{ kind = "k", column = 1 }]')
+        files = {"requirements/L0.md": req("A-1", Parameters="PRM-1"), "p.yaml": "- {id: PRM-9}\n",
+                 "n.md": "| N-1 | PRM-1 |\n"}
+        self.assertEqual(self.node(self.build(files, toml), "PRM-1")["kind"], "param")
 
     def test_parents_and_none_value(self):
         files = {"requirements/L0.md": req("A-2", **{P: "A-1, A-3 and not an id"}) + req("A-4", **{P: "TBD-1"})}
@@ -239,7 +269,7 @@ uses_fields = ["Parameters"]
     @needs_yaml
     def test_source_problems_are_reported(self):
         toml = '[[sources]]\ntype="yaml"\nkind="p"\nfile="p.yaml"\nlist_key="items"'
-        data = self.build({"p.yaml": "items: [1]\n"}, toml)
+        data = self.build({"p.yaml": "items: [1]\n", "requirements/L0.md": req("A-1")}, toml)
         self.assertEqual(len(data["problems"]), 1)
         self.assertIn("p.yaml", data["problems"][0])
         self.assertEqual(len(data["findings"][""]), 1)

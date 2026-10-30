@@ -17,9 +17,9 @@ def run(load_result, data):
             "message": f"{f.file}:{f.line}: {f.message}"} for f in load_result.problems]
     nodes = {n["id"]: n for n in data["nodes"]}
     for first, file, line in getattr(load_result, "duplicates", []):
+        where = f" at {first['file']}:{first['line']}" if first.get("file") else ""    # not for source nodes
         out.append({"item": first["id"], "severity": "error", "code": "DUPLICATE_ID",
-                    "message": f"{file}:{line}: ID {first['id']} is already defined at "
-                               f"{first.get('file')}:{first.get('line')}"})
+                    "message": f"{file}:{line}: ID {first['id']} is already defined{where}"})
     for e in data["edges"]:
         src, dst = nodes[e["from"]], nodes[e["to"]]
         for missing, holder in ((src, dst), (dst, src)):
